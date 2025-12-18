@@ -1,15 +1,11 @@
 // Integration Tests - Full flow: deposit → swap → withdraw
 
-use starknet::ContractAddress;
-use snforge_std::{
-    declare, ContractClassTrait, DeclareResultTrait
-};
 use core::array::ArrayTrait;
 use core::integer::u128;
 use core::traits::TryInto;
-
-use zylith::interfaces::izylith::IZylithDispatcher;
-use zylith::interfaces::izylith::IZylithDispatcherTrait;
+use snforge_std::{ContractClassTrait, DeclareResultTrait, declare};
+use starknet::ContractAddress;
+use zylith::interfaces::izylith::{IZylithDispatcher, IZylithDispatcherTrait};
 use zylith::privacy::commitment;
 
 fn deploy_zylith() -> IZylithDispatcher {
@@ -55,7 +51,7 @@ fn deploy_zylith() -> IZylithDispatcher {
 #[test]
 fn test_privacy_flow_deposit() {
     let dispatcher = deploy_zylith();
-    
+
     // Initialize pool
     let token0: ContractAddress = 0x1.try_into().unwrap();
     let token1: ContractAddress = 0x2.try_into().unwrap();
@@ -63,20 +59,20 @@ fn test_privacy_flow_deposit() {
     let tick_spacing: i32 = 60;
     let sqrt_price_x96: u128 = 79228162514264337593543950336;
     dispatcher.initialize(token0, token1, fee, tick_spacing, sqrt_price_x96);
-    
+
     // Add liquidity
     dispatcher.mint(-600, 600, 1000000000);
-    
+
     // Step 1: Private deposit
     let secret: felt252 = 12345;
     let nullifier: felt252 = 67890;
     let amount: u128 = 1000000;
     let commitment = commitment::generate_commitment(secret, nullifier, amount);
     dispatcher.private_deposit(commitment);
-    
+
     let root_after_deposit = dispatcher.get_merkle_root();
     assert!(root_after_deposit != 0);
-    
+
     // Verify commitment is valid
     let is_valid = commitment::verify_commitment(commitment, secret, nullifier, amount);
     assert!(is_valid);
@@ -115,7 +111,7 @@ fn test_privacy_flow_deposit() {
 #[test]
 fn test_burn_with_protocol_fees() {
     let dispatcher = deploy_zylith();
-    
+
     // Initialize pool
     let token0: ContractAddress = 0x1.try_into().unwrap();
     let token1: ContractAddress = 0x2.try_into().unwrap();
@@ -123,17 +119,17 @@ fn test_burn_with_protocol_fees() {
     let tick_spacing: i32 = 60;
     let sqrt_price_x96: u128 = 79228162514264337593543950336;
     dispatcher.initialize(token0, token1, fee, tick_spacing, sqrt_price_x96);
-    
+
     // Mint liquidity
     let tick_lower: i32 = -60;
     let tick_upper: i32 = 60;
     let mint_amount: u128 = 1000000;
     dispatcher.mint(tick_lower, tick_upper, mint_amount);
-    
+
     // Burn liquidity (protocol fees are 0 by default, so full amount returned)
     let burn_amount: u128 = 500000;
     let (amount0, amount1) = dispatcher.burn(tick_lower, tick_upper, burn_amount);
-    
+
     // Verify burn returns amounts
     assert!(amount0 >= 0);
     assert!(amount1 >= 0);
@@ -181,7 +177,8 @@ fn test_burn_with_protocol_fees() {
 //     assert!(fees1_2 >= 0);
 //
 //     // Burn remaining
-//     let (burn_amount0_2, burn_amount1_2) = dispatcher.burn(tick_lower, tick_upper, mint_amount - burn_amount);
+//     let (burn_amount0_2, burn_amount1_2) = dispatcher.burn(tick_lower, tick_upper, mint_amount -
+//     burn_amount);
 //     assert!(burn_amount0_2 >= 0);
 //     assert!(burn_amount1_2 >= 0);
 // }
@@ -189,7 +186,7 @@ fn test_burn_with_protocol_fees() {
 #[test]
 fn test_multiple_users_deposits() {
     let dispatcher = deploy_zylith();
-    
+
     // Initialize
     let token0: ContractAddress = 0x1.try_into().unwrap();
     let token1: ContractAddress = 0x2.try_into().unwrap();
@@ -197,28 +194,27 @@ fn test_multiple_users_deposits() {
     let tick_spacing: i32 = 60;
     let sqrt_price_x96: u128 = 79228162514264337593543950336;
     dispatcher.initialize(token0, token1, fee, tick_spacing, sqrt_price_x96);
-    
+
     // Multiple private deposits
     let commitment1 = commitment::generate_commitment(1, 1, 1000);
     let commitment2 = commitment::generate_commitment(2, 2, 2000);
     let commitment3 = commitment::generate_commitment(3, 3, 3000);
-    
+
     dispatcher.private_deposit(commitment1);
     let root1 = dispatcher.get_merkle_root();
-    
+
     dispatcher.private_deposit(commitment2);
     let root2 = dispatcher.get_merkle_root();
-    
+
     dispatcher.private_deposit(commitment3);
     let root3 = dispatcher.get_merkle_root();
-    
+
     // All roots should be different
     assert!(root1 != root2);
     assert!(root2 != root3);
     assert!(root1 != root3);
     assert!(root3 != 0);
 }
-
 // Commented out due to gas limit issues - swap logic is too complex
 // #[test]
 // fn test_swap_after_privacy_deposits() {
@@ -281,3 +277,4 @@ fn test_multiple_users_deposits() {
 //     assert!(fees0 >= 0);
 //     assert!(fees1 >= 0);
 // }
+

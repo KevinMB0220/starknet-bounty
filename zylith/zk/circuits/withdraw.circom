@@ -43,5 +43,5 @@ template Withdraw(depth) {
     // The contract will check if nullifier has been spent
 }
 
-component main = Withdraw(20);
+component main {public [root, commitment, nullifier, amount, recipient]} = Withdraw(20);
 

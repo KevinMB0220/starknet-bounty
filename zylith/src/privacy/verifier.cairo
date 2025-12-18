@@ -10,13 +10,9 @@
 
 // For now, this is a placeholder that will be replaced when Garaga verifiers are generated
 
-
 /// Placeholder verifier function
 /// This will be replaced with the actual Garaga-generated verifier
-pub fn verify(
-    _proof: Array<felt252>,
-    _public_inputs: Array<felt252>,
-) -> bool {
+pub fn verify(_proof: Array<felt252>, _public_inputs: Array<felt252>) -> bool {
     // TODO: Replace with actual Garaga verifier
     // This is a placeholder that always returns true for testing
     // In production, this MUST be replaced with the generated verifier

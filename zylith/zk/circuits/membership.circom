@@ -42,4 +42,4 @@ template Membership(depth) {
     }
 }
 
-component main = Membership(20);
+component main {public [root, commitment]} = Membership(20);

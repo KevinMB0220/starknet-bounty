@@ -18,21 +18,25 @@ pub const MAX_TICK: i32 = 887272;
 /// More accurate implementation using better approximation
 pub fn get_sqrt_ratio_at_tick(tick: i32) -> u128 {
     assert(tick >= MIN_TICK && tick <= MAX_TICK, 'Tick out of bounds');
-    
+
     // Base ratio for tick = 0
     if tick == 0 {
         return Q96;
+    }
+
+    let abs_tick = if tick < 0 {
+        -tick
+    } else {
+        tick
     };
-    
-    let abs_tick = if tick < 0 { -tick } else { tick };
     let abs_tick_u128: u128 = abs_tick.try_into().unwrap();
-    
+
     // More accurate approximation: 1.0001^(tick/2) ≈ 1 + (tick/2) * 0.0001
     // For better precision, we use: ratio = Q96 * (1 + tick * 0.00005)
     // Using u256 to prevent overflow
     let q96_u256: u256 = Q96.try_into().unwrap();
     let abs_tick_u256: u256 = abs_tick_u128.try_into().unwrap();
-    
+
     // More accurate approximation using exponential formula
     // For small ticks: use finer granularity
     // For larger ticks: use coarser but still accurate approximation
@@ -43,7 +47,7 @@ pub fn get_sqrt_ratio_at_tick(tick: i32) -> u128 {
     } else {
         200 // Less precise but faster for large ticks
     };
-    
+
     if tick > 0 {
         // For positive ticks: ratio increases
         // Formula: Q96 * (1 + tick * 0.00005) for small ticks
@@ -96,24 +100,27 @@ pub fn get_tick_at_sqrt_ratio(sqrt_price_x96: u128) -> i32 {
     // Allow Q96 (tick 0) as a special case
     if sqrt_price_x96 == Q96 {
         return 0;
-    };
-    assert(sqrt_price_x96 >= MIN_SQRT_RATIO && sqrt_price_x96 <= MAX_SQRT_RATIO, 'Sqrt price out of bounds');
-    
+    }
+    assert(
+        sqrt_price_x96 >= MIN_SQRT_RATIO && sqrt_price_x96 <= MAX_SQRT_RATIO,
+        'Sqrt price out of bounds',
+    );
+
     // Binary search for the tick
     let mut low = MIN_TICK;
     let mut high = MAX_TICK;
-    
+
     while low < high {
         let mid = (low + high + 1) / 2;
         let sqrt_ratio_mid = get_sqrt_ratio_at_tick(mid);
-        
+
         if sqrt_ratio_mid <= sqrt_price_x96 {
             low = mid;
         } else {
             high = mid - 1;
         };
-    };
-    
+    }
+
     low
 }
 

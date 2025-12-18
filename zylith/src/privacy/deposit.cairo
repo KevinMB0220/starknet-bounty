@@ -1,9 +1,7 @@
 // Private Deposit Logic
 
 use starknet::storage::*;
-
-use super::merkle_tree;
-use super::commitment;
+use super::{commitment, merkle_tree};
 
 #[starknet::storage_node]
 pub struct DepositStorage {
@@ -29,8 +27,8 @@ pub struct Deposit {
 pub struct NullifierSpent {
     pub nullifier: felt252,
 }
-
 // Deposit storage node definition
 // Functions using this storage will be implemented in the main Zylith contract
 // Storage nodes can only be accessed from within a #[starknet::contract] module
+
 

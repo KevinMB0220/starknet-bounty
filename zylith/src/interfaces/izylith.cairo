@@ -3,11 +3,8 @@ use starknet::ContractAddress;
 
 #[starknet::interface]
 pub trait IZylith<TContractState> {
-    fn private_deposit(
-        ref self: TContractState,
-        commitment: felt252,
-    );
-    
+    fn private_deposit(ref self: TContractState, commitment: felt252);
+
     fn private_swap(
         ref self: TContractState,
         proof: Array<felt252>,
@@ -17,7 +14,7 @@ pub trait IZylith<TContractState> {
         sqrt_price_limit_x96: u128,
         new_commitment: felt252,
     ) -> (i128, i128);
-    
+
     fn private_withdraw(
         ref self: TContractState,
         proof: Array<felt252>,
@@ -25,7 +22,7 @@ pub trait IZylith<TContractState> {
         recipient: ContractAddress,
         amount: u128,
     );
-    
+
     // CLMM functions
     fn initialize(
         ref self: TContractState,
@@ -35,34 +32,24 @@ pub trait IZylith<TContractState> {
         tick_spacing: i32,
         sqrt_price_x96: u128,
     );
-    
+
     fn mint(
-        ref self: TContractState,
-        tick_lower: i32,
-        tick_upper: i32,
-        amount: u128,
+        ref self: TContractState, tick_lower: i32, tick_upper: i32, amount: u128,
     ) -> (u128, u128);
-    
+
     fn swap(
         ref self: TContractState,
         zero_for_one: bool,
         amount_specified: u128,
         sqrt_price_limit_x96: u128,
     ) -> (i128, i128);
-    
+
     fn burn(
-        ref self: TContractState,
-        tick_lower: i32,
-        tick_upper: i32,
-        amount: u128,
+        ref self: TContractState, tick_lower: i32, tick_upper: i32, amount: u128,
     ) -> (u128, u128);
-    
-    fn collect(
-        ref self: TContractState,
-        tick_lower: i32,
-        tick_upper: i32,
-    ) -> (u128, u128);
-    
+
+    fn collect(ref self: TContractState, tick_lower: i32, tick_upper: i32) -> (u128, u128);
+
     // Privacy functions
     fn get_merkle_root(self: @TContractState) -> felt252;
     fn is_nullifier_spent(self: @TContractState, nullifier: felt252) -> bool;

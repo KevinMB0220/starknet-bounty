@@ -1,1 +1,0 @@
-Please enter the name of your project. Press enter for default name. [my_project]: 

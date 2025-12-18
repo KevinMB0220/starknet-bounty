@@ -1,9 +1,9 @@
 // Commitment System - Hash(Hash(secret, nullifier), amount)
 
-use starknet::storage::*;
-use core::poseidon::PoseidonTrait;
 use core::hash::HashStateTrait;
 use core::integer::u128;
+use core::poseidon::PoseidonTrait;
+use starknet::storage::*;
 
 /// Generate a commitment from secret, nullifier, and amount
 /// Formula: Hash(Hash(secret, nullifier), amount)
@@ -15,7 +15,7 @@ pub fn generate_commitment(secret: felt252, nullifier: felt252, amount: u128) ->
     state1 = state1.update(secret);
     state1 = state1.update(nullifier);
     let intermediate = state1.finalize();
-    
+
     // Step 2: Hash(result, amount)
     // Convert amount (u128) to felt252 for hashing
     let amount_felt: felt252 = amount.try_into().unwrap();
@@ -27,10 +27,7 @@ pub fn generate_commitment(secret: felt252, nullifier: felt252, amount: u128) ->
 
 /// Verify a commitment matches the expected values
 pub fn verify_commitment(
-    commitment: felt252,
-    secret: felt252,
-    nullifier: felt252,
-    amount: u128,
+    commitment: felt252, secret: felt252, nullifier: felt252, amount: u128,
 ) -> bool {
     let computed = generate_commitment(secret, nullifier, amount);
     commitment == computed
@@ -55,7 +52,6 @@ pub fn is_nullifier_spent(_nullifier: felt252) -> bool {
 
 /// Mark a nullifier as spent (pure function, no storage access)
 /// NOTE: Actual implementation will be in the main contract
-pub fn mark_nullifier_spent(_nullifier: felt252) {
-    // TODO: Implement in main contract
+pub fn mark_nullifier_spent(_nullifier: felt252) {// TODO: Implement in main contract
 }
 

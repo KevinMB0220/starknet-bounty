@@ -41,20 +41,20 @@ pub fn position(tick: i32) -> (i32, i32) {
 pub fn power_of_2_u256(bit_pos: i32) -> u256 {
     if bit_pos == 0 {
         return 1;
-    };
-    
+    }
+
     if bit_pos == 1 {
         return 2;
-    };
-    
+    }
+
     // Use iterative multiplication: 2^bit_pos = 2 * 2^(bit_pos-1)
     let mut result: u256 = 2;
     let mut i = 1;
     while i < bit_pos {
         result = result * 2;
         i = i + 1;
-    };
-    
+    }
+
     result
 }
 
@@ -88,6 +88,6 @@ pub fn toggle_bit(word: u256, bit_pos: i32) -> u256 {
     let mask = power_of_2_u256(bit_pos);
     word ^ mask
 }
-
 /// Storage node definitions only
 /// Functions that use these storage nodes must be implemented within contracts
+

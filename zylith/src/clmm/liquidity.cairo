@@ -5,9 +5,7 @@
 /// Formula: L = amount0 * (sqrt(P_b) * sqrt(P_a)) / (sqrt(P_b) - sqrt(P_a))
 /// Where P_a and P_b are sqrt prices at tick boundaries
 pub fn get_liquidity_for_amount0(
-    sqrt_price_a_x96: u128,
-    sqrt_price_b_x96: u128,
-    amount0: u128,
+    sqrt_price_a_x96: u128, sqrt_price_b_x96: u128, amount0: u128,
 ) -> u128 {
     // Ensure price_a < price_b (swap if needed)
     let (price_lower, price_upper) = if sqrt_price_a_x96 < sqrt_price_b_x96 {
@@ -16,7 +14,7 @@ pub fn get_liquidity_for_amount0(
         (sqrt_price_b_x96, sqrt_price_a_x96)
     };
     assert(price_lower < price_upper, 'Invalid price range');
-    
+
     // Calculate: amount0 * (sqrt(P_b) * sqrt(P_a)) / (sqrt(P_b) - sqrt(P_a))
     // In Q64.96 format
 
@@ -40,9 +38,7 @@ pub fn get_liquidity_for_amount0(
 /// Calculate liquidity for a given range (token1)
 /// Formula: L = amount1 / (sqrt(P_b) - sqrt(P_a))
 pub fn get_liquidity_for_amount1(
-    sqrt_price_a_x96: u128,
-    sqrt_price_b_x96: u128,
-    amount1: u128,
+    sqrt_price_a_x96: u128, sqrt_price_b_x96: u128, amount1: u128,
 ) -> u128 {
     // Ensure price_a < price_b (swap if needed)
     let (price_lower, price_upper) = if sqrt_price_a_x96 < sqrt_price_b_x96 {
@@ -51,7 +47,7 @@ pub fn get_liquidity_for_amount1(
         (sqrt_price_b_x96, sqrt_price_a_x96)
     };
     assert(price_lower < price_upper, 'Invalid price range');
-    
+
     // Calculate: amount1 / (sqrt(P_b) - sqrt(P_a))
     let sqrt_price_diff = price_upper - price_lower;
     assert(sqrt_price_diff > 0, 'Price diff must be positive');
@@ -71,9 +67,7 @@ pub fn get_liquidity_for_amount1(
 /// Calculate amount0 from liquidity
 /// Inverse of get_liquidity_for_amount0
 pub fn get_amount0_for_liquidity(
-    sqrt_price_a_x96: u128,
-    sqrt_price_b_x96: u128,
-    liquidity: u128,
+    sqrt_price_a_x96: u128, sqrt_price_b_x96: u128, liquidity: u128,
 ) -> u128 {
     // Ensure price_a < price_b (swap if needed)
     let (price_lower, price_upper) = if sqrt_price_a_x96 < sqrt_price_b_x96 {
@@ -82,7 +76,7 @@ pub fn get_amount0_for_liquidity(
         (sqrt_price_b_x96, sqrt_price_a_x96)
     };
     assert(price_lower < price_upper, 'Invalid price range');
-    
+
     // Formula: amount0 = L * (sqrt(P_b) - sqrt(P_a)) / (sqrt(P_b) * sqrt(P_a))
     let sqrt_price_diff = price_upper - price_lower;
 
@@ -104,9 +98,7 @@ pub fn get_amount0_for_liquidity(
 /// Calculate amount1 from liquidity
 /// Inverse of get_liquidity_for_amount1
 pub fn get_amount1_for_liquidity(
-    sqrt_price_a_x96: u128,
-    sqrt_price_b_x96: u128,
-    liquidity: u128,
+    sqrt_price_a_x96: u128, sqrt_price_b_x96: u128, liquidity: u128,
 ) -> u128 {
     // Ensure price_a < price_b (swap if needed)
     let (price_lower, price_upper) = if sqrt_price_a_x96 < sqrt_price_b_x96 {
@@ -117,8 +109,8 @@ pub fn get_amount1_for_liquidity(
     // Allow equal prices (return 0 in that case)
     if price_lower >= price_upper {
         return 0;
-    };
-    
+    }
+
     // Formula: amount1 = L * (sqrt(P_b) - sqrt(P_a)) / 2^96
     let sqrt_price_diff = price_upper - price_lower;
 
@@ -135,11 +127,7 @@ pub fn get_amount1_for_liquidity(
 
 /// Update liquidity at a tick (helper function)
 /// NOTE: Actual implementation will be in the contract that has tick storage
-pub fn calculate_liquidity_delta(
-    liquidity_gross: u128,
-    liquidity_net: i128,
-    upper: bool,
-) -> i128 {
+pub fn calculate_liquidity_delta(liquidity_gross: u128, liquidity_net: i128, upper: bool) -> i128 {
     if upper {
         -liquidity_net
     } else {

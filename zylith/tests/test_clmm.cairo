@@ -1,14 +1,10 @@
 // CLMM Tests - Comprehensive test suite for Concentrated Liquidity Market Maker
 
-use starknet::ContractAddress;
-use snforge_std::{
-    declare, ContractClassTrait, DeclareResultTrait
-};
 use core::array::ArrayTrait;
 use core::traits::TryInto;
-
-use zylith::interfaces::izylith::IZylithDispatcher;
-use zylith::interfaces::izylith::IZylithDispatcherTrait;
+use snforge_std::{ContractClassTrait, DeclareResultTrait, declare};
+use starknet::ContractAddress;
+use zylith::interfaces::izylith::{IZylithDispatcher, IZylithDispatcherTrait};
 
 fn deploy_zylith() -> IZylithDispatcher {
     let contract = declare("Zylith").unwrap().contract_class();
@@ -22,15 +18,15 @@ fn deploy_zylith() -> IZylithDispatcher {
 #[test]
 fn test_initialize_pool() {
     let dispatcher = deploy_zylith();
-    
+
     let token0: ContractAddress = 0x1.try_into().unwrap();
     let token1: ContractAddress = 0x2.try_into().unwrap();
     let fee: u128 = 3000; // 0.3% fee
     let tick_spacing: i32 = 60;
     let sqrt_price_x96: u128 = 79228162514264337593543950336; // Q96 format, price = 1
-    
+
     dispatcher.initialize(token0, token1, fee, tick_spacing, sqrt_price_x96);
-    
+
     // Verify pool is initialized
     let root = dispatcher.get_merkle_root();
     // Root should be 0 for empty tree
@@ -40,24 +36,23 @@ fn test_initialize_pool() {
 #[test]
 fn test_initialize_pool_twice_should_fail() {
     let dispatcher = deploy_zylith();
-    
+
     let token0: ContractAddress = 0x1.try_into().unwrap();
     let token1: ContractAddress = 0x2.try_into().unwrap();
     let fee: u128 = 3000;
     let tick_spacing: i32 = 60;
     let sqrt_price_x96: u128 = 79228162514264337593543950336;
-    
+
     dispatcher.initialize(token0, token1, fee, tick_spacing, sqrt_price_x96);
-    
     // Second initialization should fail
-    // Note: This test verifies the contract prevents re-initialization
-    // The actual implementation should check initialized flag
+// Note: This test verifies the contract prevents re-initialization
+// The actual implementation should check initialized flag
 }
 
 #[test]
 fn test_mint_liquidity() {
     let dispatcher = deploy_zylith();
-    
+
     // Initialize pool first
     let token0: ContractAddress = 0x1.try_into().unwrap();
     let token1: ContractAddress = 0x2.try_into().unwrap();
@@ -65,14 +60,14 @@ fn test_mint_liquidity() {
     let tick_spacing: i32 = 60;
     let sqrt_price_x96: u128 = 79228162514264337593543950336;
     dispatcher.initialize(token0, token1, fee, tick_spacing, sqrt_price_x96);
-    
+
     // Mint liquidity
     let tick_lower: i32 = -60;
     let tick_upper: i32 = 60;
     let amount: u128 = 1000000;
-    
+
     let (amount0, amount1) = dispatcher.mint(tick_lower, tick_upper, amount);
-    
+
     // Verify amounts are calculated
     assert!(amount0 > 0 || amount1 > 0);
 }
@@ -80,21 +75,21 @@ fn test_mint_liquidity() {
 #[test]
 fn test_mint_liquidity_at_current_price() {
     let dispatcher = deploy_zylith();
-    
+
     let token0: ContractAddress = 0x1.try_into().unwrap();
     let token1: ContractAddress = 0x2.try_into().unwrap();
     let fee: u128 = 3000;
     let tick_spacing: i32 = 60;
     let sqrt_price_x96: u128 = 79228162514264337593543950336; // Price = 1.0
     dispatcher.initialize(token0, token1, fee, tick_spacing, sqrt_price_x96);
-    
+
     // Mint at current price (tick 0)
     let tick_lower: i32 = -60;
     let tick_upper: i32 = 60;
     let amount: u128 = 1000000;
-    
+
     let (amount0, amount1) = dispatcher.mint(tick_lower, tick_upper, amount);
-    
+
     // At price 1.0, amounts should be roughly equal
     assert!(amount0 > 0);
     assert!(amount1 > 0);
@@ -103,14 +98,14 @@ fn test_mint_liquidity_at_current_price() {
 #[test]
 fn test_mint_liquidity_above_price() {
     let dispatcher = deploy_zylith();
-    
+
     let token0: ContractAddress = 0x1.try_into().unwrap();
     let token1: ContractAddress = 0x2.try_into().unwrap();
     let fee: u128 = 3000;
     let tick_spacing: i32 = 60;
     let sqrt_price_x96: u128 = 79228162514264337593543950336;
     dispatcher.initialize(token0, token1, fee, tick_spacing, sqrt_price_x96);
-    
+
     // Mint above current price (only token1)
     // Use a wider range to ensure valid price difference
     let tick_lower: i32 = 120;
@@ -126,21 +121,21 @@ fn test_mint_liquidity_above_price() {
 #[test]
 fn test_mint_liquidity_below_price() {
     let dispatcher = deploy_zylith();
-    
+
     let token0: ContractAddress = 0x1.try_into().unwrap();
     let token1: ContractAddress = 0x2.try_into().unwrap();
     let fee: u128 = 3000;
     let tick_spacing: i32 = 60;
     let sqrt_price_x96: u128 = 79228162514264337593543950336;
     dispatcher.initialize(token0, token1, fee, tick_spacing, sqrt_price_x96);
-    
+
     // Mint below current price (only token0)
     let tick_lower: i32 = -120;
     let tick_upper: i32 = -60;
     let amount: u128 = 1000000;
-    
+
     let (amount0, amount1) = dispatcher.mint(tick_lower, tick_upper, amount);
-    
+
     // Should only require token0
     assert!(amount0 > 0);
     assert!(amount1 == 0);
@@ -170,7 +165,8 @@ fn test_mint_liquidity_below_price() {
 //     let amount_specified: u128 = 1000; // Reduced from 100000
 //     let sqrt_price_limit_x96: u128 = 1; // Very low limit
 //
-//     let (amount0, amount1) = dispatcher.swap(zero_for_one, amount_specified, sqrt_price_limit_x96);
+//     let (amount0, amount1) = dispatcher.swap(zero_for_one, amount_specified,
+//     sqrt_price_limit_x96);
 //
 //     // Verify swap executed
 //     assert!(amount0 < 0); // Input amount (negative)
@@ -198,7 +194,8 @@ fn test_mint_liquidity_below_price() {
 //     let current_price = 79228162514264337593543950336;
 //     let sqrt_price_limit_x96: u128 = current_price + (current_price / 10); // 10% higher
 //
-//     let (amount0, amount1) = dispatcher.swap(zero_for_one, amount_specified, sqrt_price_limit_x96);
+//     let (amount0, amount1) = dispatcher.swap(zero_for_one, amount_specified,
+//     sqrt_price_limit_x96);
 //
 //     // Verify swap executed (at least one amount should be non-zero)
 //     assert!(amount0 != 0 || amount1 != 0);
@@ -225,7 +222,8 @@ fn test_mint_liquidity_below_price() {
 //     let current_price = 79228162514264337593543950336;
 //     let sqrt_price_limit_x96: u128 = current_price - (current_price / 10); // 10% lower
 //
-//     let (amount0, amount1) = dispatcher.swap(zero_for_one, amount_specified, sqrt_price_limit_x96);
+//     let (amount0, amount1) = dispatcher.swap(zero_for_one, amount_specified,
+//     sqrt_price_limit_x96);
 //
 //     // Swap should execute (at least one amount should be non-zero)
 //     assert!(amount0 != 0 || amount1 != 0);
@@ -234,7 +232,7 @@ fn test_mint_liquidity_below_price() {
 #[test]
 fn test_burn_liquidity() {
     let dispatcher = deploy_zylith();
-    
+
     // Initialize and mint
     let token0: ContractAddress = 0x1.try_into().unwrap();
     let token1: ContractAddress = 0x2.try_into().unwrap();
@@ -242,17 +240,17 @@ fn test_burn_liquidity() {
     let tick_spacing: i32 = 60;
     let sqrt_price_x96: u128 = 79228162514264337593543950336;
     dispatcher.initialize(token0, token1, fee, tick_spacing, sqrt_price_x96);
-    
+
     let tick_lower: i32 = -60;
     let tick_upper: i32 = 60;
     let mint_amount: u128 = 1000000;
     dispatcher.mint(tick_lower, tick_upper, mint_amount);
-    
+
     // Burn liquidity - use a reasonable fraction of the minted amount
     // Since liquidity is scaled, use a smaller burn amount
     let burn_amount: u128 = 50000; // Smaller amount to avoid overflow
     let (amount0, amount1) = dispatcher.burn(tick_lower, tick_upper, burn_amount);
-    
+
     // Verify burn returns amounts
     assert!(amount0 >= 0);
     assert!(amount1 >= 0);
@@ -261,23 +259,24 @@ fn test_burn_liquidity() {
 #[test]
 fn test_burn_all_liquidity() {
     let dispatcher = deploy_zylith();
-    
+
     let token0: ContractAddress = 0x1.try_into().unwrap();
     let token1: ContractAddress = 0x2.try_into().unwrap();
     let fee: u128 = 3000;
     let tick_spacing: i32 = 60;
     let sqrt_price_x96: u128 = 79228162514264337593543950336;
     dispatcher.initialize(token0, token1, fee, tick_spacing, sqrt_price_x96);
-    
+
     let tick_lower: i32 = -60;
     let tick_upper: i32 = 60;
     let mint_amount: u128 = 1000000;
     dispatcher.mint(tick_lower, tick_upper, mint_amount);
-    
+
     // Burn all liquidity - use a large amount to burn all available
     // The actual liquidity minted may be different from mint_amount
-    let (amount0, amount1) = dispatcher.burn(tick_lower, tick_upper, 1000000000); // Large enough to burn all
-    
+    let (amount0, amount1) = dispatcher
+        .burn(tick_lower, tick_upper, 1000000000); // Large enough to burn all
+
     assert!(amount0 >= 0);
     assert!(amount1 >= 0);
 }
@@ -342,26 +341,25 @@ fn test_burn_all_liquidity() {
 #[test]
 fn test_collect_fees_no_swaps() {
     let dispatcher = deploy_zylith();
-    
+
     let token0: ContractAddress = 0x1.try_into().unwrap();
     let token1: ContractAddress = 0x2.try_into().unwrap();
     let fee: u128 = 3000;
     let tick_spacing: i32 = 60;
     let sqrt_price_x96: u128 = 79228162514264337593543950336;
     dispatcher.initialize(token0, token1, fee, tick_spacing, sqrt_price_x96);
-    
+
     let tick_lower: i32 = -600;
     let tick_upper: i32 = 600;
     dispatcher.mint(tick_lower, tick_upper, 100000); // Reduced from 1000000000
 
     // Collect fees without any swaps
     let (fees0, fees1) = dispatcher.collect(tick_lower, tick_upper);
-    
+
     // Should be zero fees
     assert!(fees0 == 0);
     assert!(fees1 == 0);
 }
-
 // Commented out due to gas limit issues - swap with multiple positions exceeds gas
 // #[test]
 // fn test_multiple_positions() {
@@ -389,3 +387,4 @@ fn test_collect_fees_no_swaps() {
 //     assert!(fees0 >= 0);
 //     assert!(fees1 >= 0);
 // }
+
