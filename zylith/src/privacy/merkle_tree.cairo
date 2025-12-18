@@ -76,7 +76,7 @@ pub fn calculate_root_from_leaves(leaves: Array<felt252>) -> felt252 {
         next_level = ArrayTrait::new();
     }
 
-    *current_level.at(0)
+    return *current_level.at(0);
 }
 
 /// Verify Merkle proof
