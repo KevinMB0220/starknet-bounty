@@ -65,7 +65,7 @@ pub mod Zylith {
         pub token1: ContractAddress,
         pub fee: u128,
         pub tick_spacing: i32,
-        pub sqrt_price_x96: u128,
+        pub sqrt_price_x128: u256,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -106,7 +106,7 @@ pub mod Zylith {
             token1: ContractAddress,
             fee: u128,
             tick_spacing: i32,
-            sqrt_price_x96: u128,
+            sqrt_price_x128: u256,
         ) {
             assert!(!self.initialized.read());
 
@@ -115,9 +115,9 @@ pub mod Zylith {
             self.pool.token1.write(token1);
             self.pool.fee.write(fee);
             self.pool.tick_spacing.write(tick_spacing);
-            self.pool.sqrt_price_x96.write(sqrt_price_x96);
+            self.pool.sqrt_price_x128.write(sqrt_price_x128);
 
-            let tick = math::get_tick_at_sqrt_ratio(sqrt_price_x96);
+            let tick = math::get_tick_at_sqrt_ratio(sqrt_price_x128);
             self.pool.tick.write(tick);
             self.pool.liquidity.write(0);
             self.pool.fee_growth_global0_x128.write(0);
@@ -130,7 +130,7 @@ pub mod Zylith {
             self
                 .emit(
                     Event::Initialized(
-                        Initialized { token0, token1, fee, tick_spacing, sqrt_price_x96 },
+                        Initialized { token0, token1, fee, tick_spacing, sqrt_price_x128 },
                     ),
                 );
         }
@@ -142,9 +142,9 @@ pub mod Zylith {
             self.merkle_tree.leaves.entry(index).write(commitment);
             self.merkle_tree.next_index.write(index + 1);
 
-            // Recalculate root by reading all leaves and computing
-            // NOTE: In production, this would be optimized to only update affected nodes
-            let new_root = InternalFunctionsImpl::_recalculate_merkle_root(ref self);
+            // Update Merkle root incrementally (O(log N)) instead of recalculating (O(N))
+            // This significantly reduces gas usage
+            let new_root = InternalFunctionsImpl::_update_merkle_root(ref self, index, commitment);
             self.merkle_tree.root.write(new_root);
 
             // Emit event for ASP synchronization
@@ -167,51 +167,42 @@ pub mod Zylith {
             public_inputs: Array<felt252>,
             zero_for_one: bool,
             amount_specified: u128,
-            sqrt_price_limit_x96: u128,
+            sqrt_price_limit_x128: u256,
             new_commitment: felt252,
         ) -> (i128, i128) {
             // Step 1 - Verify ZK proof using Garaga verifier
-            // TODO: Uncomment when Garaga verifier is generated
+            let swap_verifier_addr = self.swap_verifier.read();
+            let verifier = ISwapVerifier { contract_address: swap_verifier_addr };
+            let _verified_inputs = verifier.verify_groth16_proof_bn254(proof.span()).unwrap();
 
-            // let is_valid = self.verify_swap_proof(proof.into());
-            // assert!(is_valid, "Invalid_ZK_Proof");
+            // In a production environment, we would validate that verified_inputs
+            // match the public_inputs provided. For MVP, we use public_inputs for logic.
 
-            // Step 2 - Validate Merkle membership from public_inputs
-            // Extract commitment, path, root from public_inputs
-            // Expected format: [commitment, root, path_length, ...path, ...path_indices]
-            assert!(public_inputs.len() >= 3);
-            let commitment = *public_inputs.at(0);
-            let root = *public_inputs.at(1);
-            let path_length = *public_inputs.at(2);
+            // Step 2 - Use verified values from ZK proof
+            // Verified inputs indices (mapping to circuit public outputs):
+            // 0: commitment (the one being spent)
+            // 1: root
+            // 2: new_commitment
+            // 3: amount_specified (u128 stored in lower bits of u256)
+            // 4: zero_for_one (0 for false, 1 for true)
 
-            // Verify root matches current Merkle root
+            assert(_verified_inputs.len() >= 5, 'INVALID_VERIFIED_INPUTS_LEN');
+
+            let verified_root: felt252 = (*_verified_inputs.at(1)).try_into().unwrap();
+            let verified_amount: u128 = (*_verified_inputs.at(3)).low;
+            let verified_new_commitment: felt252 = (*_verified_inputs.at(2)).try_into().unwrap();
+
+            // CRITICAL: Verify root matches current Merkle root
             let current_root = self.merkle_tree.root.read();
-            assert!(root == current_root);
+            assert(verified_root == current_root, 'INVALID_MERKLE_ROOT');
 
-            // Extract path and path_indices
-            let mut path: Array<felt252> = ArrayTrait::new();
-            let mut path_indices: Array<u32> = ArrayTrait::new();
-            let path_length_u32: u32 = path_length.try_into().unwrap();
-            let mut i: u32 = 3;
-            while i < 3 + path_length_u32 {
-                path.append(*public_inputs.at(i));
-                i = i + 1;
-            }
-            while i < 3 + path_length_u32 * 2 {
-                let index_val: u32 = (*public_inputs.at(i)).try_into().unwrap();
-                path_indices.append(index_val);
-                i = i + 1;
-            }
-
-            // Verify Merkle proof
-            let is_valid_proof = zylith::privacy::merkle_tree::verify_proof(
-                commitment, path, path_indices, root,
-            );
-            assert!(is_valid_proof);
+            // CRITICAL: Ensure proof matches call arguments
+            assert(verified_amount == amount_specified, 'AMOUNT_MISMATCH');
+            assert(verified_new_commitment == new_commitment, 'COMMITMENT_MISMATCH');
 
             // Step 3 - Execute swap in CLMM
             let (amount0, amount1) = InternalFunctionsImpl::_execute_swap(
-                ref self, zero_for_one, amount_specified, sqrt_price_limit_x96,
+                ref self, zero_for_one, amount_specified, sqrt_price_limit_x128,
             );
 
             // Step 4 - Add new commitment to Merkle tree
@@ -229,22 +220,38 @@ pub mod Zylith {
             amount: u128,
         ) {
             // Step 1 - Verify ZK proof using Garaga verifier
-            // TODO: Uncomment when Garaga verifier is generated
+            let withdraw_verifier_addr = self.withdraw_verifier.read();
+            let verifier = IWithdrawVerifier { contract_address: withdraw_verifier_addr };
+            let _verified_inputs = verifier.verify_groth16_proof_bn254(proof.span()).unwrap();
 
-            // let is_valid = self.verify_withdraw_proof(proof.into());
-            // assert!(is_valid, "Invalid ZK proof");
+            // Step 2 - Use verified values from ZK proof
+            // 0: nullifier
+            // 1: root
+            // 2: recipient (address)
+            // 3: amount
+            // 4: fee
+            assert(_verified_inputs.len() >= 4, 'INVALID_VERIFIED_INPUTS_LEN');
 
-            // Step 2 - Extract nullifier from public_inputs
-            // Expected format: [nullifier, ...other_inputs]
-            assert!(public_inputs.len() >= 1);
-            let nullifier = *public_inputs.at(0);
+            let verified_nullifier: felt252 = (*_verified_inputs.at(0)).try_into().unwrap();
+            let verified_root: felt252 = (*_verified_inputs.at(1)).try_into().unwrap();
+            let verified_amount: u128 = (*_verified_inputs.at(3)).low;
+            let verified_recipient_felt: felt252 = (*_verified_inputs.at(2)).try_into().unwrap();
+            let verified_recipient: ContractAddress = verified_recipient_felt.try_into().unwrap();
+
+            // CRITICAL: Check root
+            let current_root = self.merkle_tree.root.read();
+            assert(verified_root == current_root, 'INVALID_MERKLE_ROOT');
+
+            // CRITICAL: Ensure call args match proof
+            assert(verified_amount == amount, 'AMOUNT_MISMATCH');
+            assert(verified_recipient == recipient, 'RECIPIENT_MISMATCH');
 
             // Check nullifier hasn't been spent
-            let is_spent = self.nullifiers.spent_nullifiers.entry(nullifier).read();
-            assert!(!is_spent);
+            let is_spent = self.nullifiers.spent_nullifiers.entry(verified_nullifier).read();
+            assert(!is_spent, 'NULLIFIER_ALREADY_SPENT');
 
             // Step 3 - Mark nullifier as spent
-            self.nullifiers.spent_nullifiers.entry(nullifier).write(true);
+            self.nullifiers.spent_nullifiers.entry(verified_nullifier).write(true);
 
             // Step 4 - Transfer tokens to recipient
             // TODO: Implement ERC20 transfer logic
@@ -258,7 +265,9 @@ pub mod Zylith {
                 .emit(
                     Event::PrivacyEvent(
                         zylith::privacy::deposit::PrivacyEvent::NullifierSpent(
-                            zylith::privacy::deposit::NullifierSpent { nullifier },
+                            zylith::privacy::deposit::NullifierSpent {
+                                nullifier: verified_nullifier,
+                            },
                         ),
                     ),
                 );
@@ -277,7 +286,7 @@ pub mod Zylith {
 
             let caller = get_caller_address();
             let current_tick = self.pool.tick.read();
-            let current_sqrt_price = self.pool.sqrt_price_x96.read();
+            let current_sqrt_price = self.pool.sqrt_price_x128.read();
 
             // Calculate sqrt prices at boundaries
             let sqrt_price_lower = math::get_sqrt_ratio_at_tick(tick_lower);
@@ -294,7 +303,7 @@ pub mod Zylith {
             } else {
                 // If equal, add a small difference to make it valid
                 // This handles edge cases where ticks are too close
-                let min_diff = math::Q96 / 1000000; // Very small difference
+                let min_diff = math::Q128 / 1000000; // Very small difference
                 (sqrt_price_lower, sqrt_price_upper + min_diff)
             };
 
@@ -447,10 +456,10 @@ pub mod Zylith {
             ref self: ContractState,
             zero_for_one: bool,
             amount_specified: u128,
-            sqrt_price_limit_x96: u128,
+            sqrt_price_limit_x128: u256,
         ) -> (i128, i128) {
             InternalFunctionsImpl::_execute_swap(
-                ref self, zero_for_one, amount_specified, sqrt_price_limit_x96,
+                ref self, zero_for_one, amount_specified, sqrt_price_limit_x128,
             )
         }
 
@@ -633,43 +642,49 @@ pub mod Zylith {
             ref self: ContractState,
             zero_for_one: bool,
             amount_specified: u128,
-            sqrt_price_limit_x96: u128,
+            sqrt_price_limit_x128: u256,
         ) -> (i128, i128) {
-            let mut sqrt_price_x96 = self.pool.sqrt_price_x96.read();
+            let mut sqrt_price_x128 = self.pool.sqrt_price_x128.read();
             let mut current_tick = self.pool.tick.read();
             let mut liquidity = self.pool.liquidity.read();
 
             // Check price limits - validate swap direction
             // For zero_for_one: price decreases, limit should be <= current price
             // For one_for_zero: price increases, limit should be >= current price
-            let mut adjusted_limit = sqrt_price_limit_x96;
+            let mut adjusted_limit = sqrt_price_limit_x128;
+            if adjusted_limit < math::MIN_SQRT_RATIO {
+                adjusted_limit = math::MIN_SQRT_RATIO;
+            }
+            if adjusted_limit > math::MAX_SQRT_RATIO {
+                adjusted_limit = math::MAX_SQRT_RATIO;
+            }
             if zero_for_one {
                 // For zero_for_one, price should decrease, so limit should be lower
-                if adjusted_limit >= sqrt_price_x96 {
+                if adjusted_limit >= sqrt_price_x128 {
                     // Invalid limit (can't go up when swapping down)
                     // Adjust limit to be slightly below current price
-                    let min_diff = math::Q96 / 1000000;
-                    if sqrt_price_x96 > min_diff {
-                        adjusted_limit = sqrt_price_x96 - min_diff;
+                    let min_diff = math::Q128 / 1000000;
+                    if sqrt_price_x128 > min_diff {
+                        adjusted_limit = sqrt_price_x128 - min_diff;
                     } else {
                         adjusted_limit = math::MIN_SQRT_RATIO;
                     };
                 };
             } else {
                 // For one_for_zero, price should increase, so limit should be higher
-                if adjusted_limit <= sqrt_price_x96 {
+                if adjusted_limit <= sqrt_price_x128 {
                     // Invalid limit (can't go down when swapping up)
                     // Adjust limit to be slightly above current price
-                    let min_diff = math::Q96 / 1000000;
+                    let min_diff = math::Q128 / 1000000;
                     let max_price = math::MAX_SQRT_RATIO;
-                    if sqrt_price_x96 < max_price - min_diff {
-                        adjusted_limit = sqrt_price_x96 + min_diff;
+                    if sqrt_price_x128 < max_price - min_diff {
+                        adjusted_limit = sqrt_price_x128 + min_diff;
                     } else {
                         adjusted_limit = max_price;
                     };
                 };
             }
-            let sqrt_price_limit_x96 = adjusted_limit;
+            let sqrt_price_limit_x128 = adjusted_limit;
 
             // Track swap amounts
             let mut amount0: i128 = 0;
@@ -677,27 +692,36 @@ pub mod Zylith {
             let mut amount_specified_remaining = amount_specified;
 
             // Swap loop: iterate until amount is consumed or price limit reached
-            while amount_specified_remaining > 0 {
-                // Get next initialized tick in the swap direction
+            let mut step_count: u32 = 0;
+            while amount_specified_remaining > 0 && step_count < 100 {
+                step_count += 1;
+                // Get tick limit from price limit
+                let tick_limit = math::get_tick_at_sqrt_ratio(sqrt_price_limit_x128);
+
+                // Get next initialized tick in the swap direction with limit
                 let next_tick = Self::_get_next_initialized_tick(
-                    ref self, current_tick, zero_for_one,
+                    ref self, current_tick, tick_limit, zero_for_one,
                 );
 
+                if next_tick == current_tick {
+                    break;
+                }
+
                 // Calculate sqrt price at next tick
-                let next_sqrt_price_x96 = math::get_sqrt_ratio_at_tick(next_tick);
+                let next_sqrt_price_x128 = math::get_sqrt_ratio_at_tick(next_tick);
 
                 // Determine target price (either next tick or limit)
-                let target_sqrt_price_x96 = if zero_for_one {
-                    if next_sqrt_price_x96 < sqrt_price_limit_x96 {
-                        sqrt_price_limit_x96
+                let target_sqrt_price_x128 = if zero_for_one {
+                    if next_sqrt_price_x128 < sqrt_price_limit_x128 {
+                        sqrt_price_limit_x128
                     } else {
-                        next_sqrt_price_x96
+                        next_sqrt_price_x128
                     }
                 } else {
-                    if next_sqrt_price_x96 > sqrt_price_limit_x96 {
-                        sqrt_price_limit_x96
+                    if next_sqrt_price_x128 > sqrt_price_limit_x128 {
+                        sqrt_price_limit_x128
                     } else {
-                        next_sqrt_price_x96
+                        next_sqrt_price_x128
                     }
                 };
 
@@ -705,14 +729,14 @@ pub mod Zylith {
                 let (
                     step_amount0,
                     step_amount1,
-                    new_sqrt_price_x96,
+                    new_sqrt_price_x128,
                     step_fee_amount0,
                     step_fee_amount1,
                 ) =
                     Self::_compute_swap_step(
                     ref self,
-                    sqrt_price_x96,
-                    target_sqrt_price_x96,
+                    sqrt_price_x128,
+                    target_sqrt_price_x128,
                     liquidity,
                     amount_specified_remaining,
                     zero_for_one,
@@ -785,26 +809,30 @@ pub mod Zylith {
                 }
 
                 // Update price
-                sqrt_price_x96 = new_sqrt_price_x96;
-                current_tick = math::get_tick_at_sqrt_ratio(sqrt_price_x96);
+                sqrt_price_x128 = new_sqrt_price_x128;
+                current_tick = math::get_tick_at_sqrt_ratio(sqrt_price_x128);
 
                 // Check if we reached the price limit
-                if (zero_for_one && sqrt_price_x96 <= sqrt_price_limit_x96)
-                    || (!zero_for_one && sqrt_price_x96 >= sqrt_price_limit_x96) {
+                if (zero_for_one && sqrt_price_x128 <= sqrt_price_limit_x128)
+                    || (!zero_for_one && sqrt_price_x128 >= sqrt_price_limit_x128) {
                     break;
                 }
 
                 // If we reached the next tick, cross it
                 // Use approximate comparison to handle floating point precision
-                let price_diff = if sqrt_price_x96 > next_sqrt_price_x96 {
-                    sqrt_price_x96 - next_sqrt_price_x96
+                let price_diff = if sqrt_price_x128 > next_sqrt_price_x128 {
+                    sqrt_price_x128 - next_sqrt_price_x128
                 } else {
-                    next_sqrt_price_x96 - sqrt_price_x96
+                    next_sqrt_price_x128 - sqrt_price_x128
                 };
-                let price_tolerance = math::Q96 / 1000000; // Small tolerance for comparison
+                let price_tolerance = math::Q128 / 1000000; // Small tolerance for comparison
 
-                if price_diff <= price_tolerance || sqrt_price_x96 == next_sqrt_price_x96 {
+                if price_diff <= price_tolerance || sqrt_price_x128 == next_sqrt_price_x128 {
                     Self::_cross_tick(ref self, next_tick, zero_for_one);
+
+                    // Explicitly update current_tick and price to next tick to ensure progress
+                    current_tick = next_tick;
+                    sqrt_price_x128 = next_sqrt_price_x128;
 
                     // Update liquidity after crossing tick
                     let tick_entry = self.ticks.entry(next_tick);
@@ -872,7 +900,7 @@ pub mod Zylith {
             }
 
             // Update pool state
-            self.pool.sqrt_price_x96.write(sqrt_price_x96);
+            self.pool.sqrt_price_x128.write(sqrt_price_x128);
             self.pool.tick.write(current_tick);
             self.pool.liquidity.write(liquidity);
 
@@ -887,7 +915,7 @@ pub mod Zylith {
                                 zero_for_one,
                                 amount0,
                                 amount1,
-                                sqrt_price_x96,
+                                sqrt_price_x128,
                                 liquidity,
                                 tick: current_tick,
                             },
@@ -902,12 +930,12 @@ pub mod Zylith {
         /// Returns: (amount0, amount1, new_sqrt_price, fee_amount0, fee_amount1)
         fn _compute_swap_step(
             ref self: ContractState,
-            sqrt_price_current: u128,
-            sqrt_price_target: u128,
+            sqrt_price_current: u256,
+            sqrt_price_target: u256,
             liquidity: u128,
             amount_remaining: u128,
             zero_for_one: bool,
-        ) -> (i128, i128, u128, u128, u128) {
+        ) -> (i128, i128, u256, u128, u128) {
             // Calculate price difference - ensure no underflow
             let sqrt_price_diff = if zero_for_one {
                 if sqrt_price_current > sqrt_price_target {
@@ -924,24 +952,27 @@ pub mod Zylith {
             };
 
             // Calculate amount needed to reach target price
-            // Formula: amount = liquidity * sqrt_price_diff / sqrt_price_current
-            // Handle case where sqrt_price_diff is 0 or liquidity is 0
+            // Formula for token1 (price moves): amount = liquidity * sqrt_price_diff / Q96
+            // Formula for token0 (price moves): amount = liquidity * sqrt_price_diff / (price0 *
+            // price1)
+            // Simplified for MVP: amount = liquidity * sqrt_price_diff / Q96
             let amount_needed = if sqrt_price_diff == 0 || liquidity == 0 {
                 0
             } else {
-                let amt = math::mul_u128(liquidity, sqrt_price_diff);
-                if sqrt_price_current > 0 {
-                    amt / sqrt_price_current
-                } else {
-                    0
-                }
+                let liquidity_u256: u256 = liquidity.into();
+                let sqrt_price_diff_u256: u256 = sqrt_price_diff;
+                let q128_u256: u256 = math::Q128;
+
+                let amt_u256 = (liquidity_u256 * sqrt_price_diff_u256) / q128_u256;
+                let amt: u128 = amt_u256.try_into().unwrap();
+                amt
             };
 
             // Get pool fee rate
             let pool_fee = self.pool.fee.read();
 
             // Determine if we can reach target or need partial step
-            let (new_sqrt_price_x96, amount0, amount1, fee_amount0, fee_amount1) =
+            let (new_sqrt_price_x128, amount0, amount1, fee_amount0, fee_amount1) =
                 if amount_remaining >= amount_needed {
                 // Can reach target price
                 let amount0_val: i128 = if zero_for_one {
@@ -991,8 +1022,9 @@ pub mod Zylith {
                 let new_price = if liquidity == 0 || sqrt_price_current == 0 {
                     sqrt_price_current // Can't calculate, keep current
                 } else {
-                    let price_delta = math::mul_u128(amount_remaining, sqrt_price_current);
-                    let price_delta = price_delta / liquidity;
+                    let amount_rem_u256: u256 = amount_remaining.into();
+                    let price_delta = math::mul_u256(amount_rem_u256, sqrt_price_current);
+                    let price_delta = price_delta / liquidity.into();
 
                     if zero_for_one {
                         if price_delta < sqrt_price_current {
@@ -1045,89 +1077,180 @@ pub mod Zylith {
                 (new_price, amount0_val, amount1_val, fee_amount0_val, fee_amount1_val)
             };
 
-            (amount0, amount1, new_sqrt_price_x96, fee_amount0, fee_amount1)
+            (amount0, amount1, new_sqrt_price_x128, fee_amount0, fee_amount1)
         }
 
         /// Get next initialized tick in swap direction (optimized bitmap lookup)
         fn _get_next_initialized_tick(
-            ref self: ContractState, tick: i32, zero_for_one: bool,
+            ref self: ContractState, tick: i32, tick_limit: i32, zero_for_one: bool,
         ) -> i32 {
-            // Use optimized bitmap scanning
-            let (mut word_pos, mut bit_pos) = tick::position(tick);
-
-            // Search within the current word
+            let search_tick = if zero_for_one {
+                tick
+            } else {
+                tick + 1
+            };
+            let (mut word_pos, mut bit_pos) = tick::position(search_tick);
             let mut word = self.tick_bitmap.bitmap.entry(word_pos).read();
 
-            if zero_for_one { // Searching downwards (lte)
-                let mut search_bit_pos = bit_pos;
-                while search_bit_pos >= 0 {
-                    if tick::is_bit_set(word, search_bit_pos) {
-                        let found_tick = word_pos * 256 + search_bit_pos;
-                        // Verify tick is actually initialized
-                        let tick_entry = self.ticks.entry(found_tick);
-                        if tick_entry.initialized.read() {
-                            return found_tick;
-                        };
+            if zero_for_one { // Searching downwards (lt)
+                if bit_pos > 0 {
+                    let mask = (zylith::clmm::tick::power_of_2_u256(bit_pos) - 1);
+                    let mut masked_word = word & mask;
+
+                    if masked_word != 0 {
+                        let highest = Self::_find_highest_bit(masked_word);
+                        if highest >= 0 {
+                            let found_tick = word_pos * 256 + highest;
+                            let tick_entry = self.ticks.entry(found_tick);
+                            if tick_entry.initialized.read() {
+                                return found_tick;
+                            }
+                        }
                     }
-                    search_bit_pos = search_bit_pos - 1;
                 }
-                // Search in previous words
+
+                // Search in previous words up to tick_limit
                 word_pos = word_pos - 1;
-                while word_pos >= math::MIN_TICK / 256 {
+                let min_word_pos = if tick_limit > math::MIN_TICK {
+                    tick_limit / 256
+                } else {
+                    math::MIN_TICK / 256
+                };
+                while word_pos >= min_word_pos {
                     word = self.tick_bitmap.bitmap.entry(word_pos).read();
                     if word != 0 {
-                        // Find the highest set bit in this word
-                        let mut i = 255;
-                        while i >= 0 {
-                            if tick::is_bit_set(word, i) {
-                                let found_tick = word_pos * 256 + i;
-                                let tick_entry = self.ticks.entry(found_tick);
-                                if tick_entry.initialized.read() {
-                                    return found_tick;
-                                };
+                        let highest = Self::_find_highest_bit(word);
+                        if highest >= 0 {
+                            let found_tick = word_pos * 256 + highest;
+                            let tick_entry = self.ticks.entry(found_tick);
+                            if tick_entry.initialized.read() {
+                                return found_tick;
                             }
-                            i = i - 1;
                         }
                     }
                     word_pos = word_pos - 1;
                 }
-                math::MIN_TICK // Return boundary if not found
-            } else { // Searching upwards (gte)
-                let mut search_bit_pos = bit_pos;
-                while search_bit_pos < 256 {
-                    if tick::is_bit_set(word, search_bit_pos) {
-                        let found_tick = word_pos * 256 + search_bit_pos;
-                        // Verify tick is actually initialized
-                        let tick_entry = self.ticks.entry(found_tick);
-                        if tick_entry.initialized.read() {
-                            return found_tick;
-                        };
+                tick_limit
+            } else { // Searching upwards (gt)
+                if bit_pos < 255 {
+                    let mask = ~(zylith::clmm::tick::power_of_2_u256(bit_pos + 1) - 1);
+                    let mut masked_word = word & mask;
+
+                    if masked_word != 0 {
+                        let lowest = Self::_find_lowest_bit(masked_word);
+                        if lowest >= 0 {
+                            let found_tick = word_pos * 256 + lowest;
+                            let tick_entry = self.ticks.entry(found_tick);
+                            if tick_entry.initialized.read() {
+                                return found_tick;
+                            }
+                        }
                     }
-                    search_bit_pos = search_bit_pos + 1;
                 }
-                // Search in next words
+
+                // Search in next words up to tick_limit
                 word_pos = word_pos + 1;
-                let max_word_pos = math::MAX_TICK / 256;
+                let max_word_pos = if tick_limit < math::MAX_TICK {
+                    tick_limit / 256
+                } else {
+                    math::MAX_TICK / 256
+                };
                 while word_pos <= max_word_pos {
                     word = self.tick_bitmap.bitmap.entry(word_pos).read();
                     if word != 0 {
-                        // Find the lowest set bit in this word
-                        let mut i = 0;
-                        while i < 256 {
-                            if tick::is_bit_set(word, i) {
-                                let found_tick = word_pos * 256 + i;
-                                let tick_entry = self.ticks.entry(found_tick);
-                                if tick_entry.initialized.read() {
-                                    return found_tick;
-                                };
+                        let lowest = Self::_find_lowest_bit(word);
+                        if lowest >= 0 {
+                            let found_tick = word_pos * 256 + lowest;
+                            let tick_entry = self.ticks.entry(found_tick);
+                            if tick_entry.initialized.read() {
+                                return found_tick;
                             }
-                            i = i + 1;
                         }
                     }
                     word_pos = word_pos + 1;
                 }
-                math::MAX_TICK // Return boundary if not found
+                tick_limit
             }
+        }
+
+        fn _find_highest_bit(mut word: u256) -> i32 {
+            if word == 0 {
+                return -1;
+            }
+            let mut res = 0;
+            if word >= 0x100000000000000000000000000000000 {
+                word = word / 0x100000000000000000000000000000000;
+                res += 128;
+            }
+            if word >= 0x10000000000000000 {
+                word = word / 0x10000000000000000;
+                res += 64;
+            }
+            if word >= 0x100000000 {
+                word = word / 0x100000000;
+                res += 32;
+            }
+            if word >= 0x10000 {
+                word = word / 0x10000;
+                res += 16;
+            }
+            if word >= 0x100 {
+                word = word / 0x100;
+                res += 8;
+            }
+            if word >= 0x10 {
+                word = word / 0x10;
+                res += 4;
+            }
+            if word >= 0x4 {
+                word = word / 0x4;
+                res += 2;
+            }
+            if word >= 0x2 {
+                word = word / 0x2;
+                res += 1;
+            }
+            res
+        }
+
+        fn _find_lowest_bit(mut word: u256) -> i32 {
+            if word == 0 {
+                return -1;
+            }
+            let mut res = 0;
+            if word % 0x100000000000000000000000000000000 == 0 {
+                word = word / 0x100000000000000000000000000000000;
+                res += 128;
+            }
+            if word % 0x10000000000000000 == 0 {
+                word = word / 0x10000000000000000;
+                res += 64;
+            }
+            if word % 0x100000000 == 0 {
+                word = word / 0x100000000;
+                res += 32;
+            }
+            if word % 0x10000 == 0 {
+                word = word / 0x10000;
+                res += 16;
+            }
+            if word % 0x100 == 0 {
+                word = word / 0x100;
+                res += 8;
+            }
+            if word % 0x10 == 0 {
+                word = word / 0x10;
+                res += 4;
+            }
+            if word % 0x4 == 0 {
+                word = word / 0x4;
+                res += 2;
+            }
+            if word % 0x2 == 0 {
+                word = word / 0x2;
+                res += 1;
+            }
+            res
         }
 
         /// Cross a tick during swap - update liquidity and fee growth
@@ -1231,24 +1354,51 @@ pub mod Zylith {
             fee_growth_global - fee_growth_below - fee_growth_above
         }
 
-        /// Recalculate Merkle root from all stored leaves
-        fn _recalculate_merkle_root(ref self: ContractState) -> felt252 {
-            let next_index = self.merkle_tree.next_index.read();
+        /// Update Merkle root incrementally after adding a new leaf
+        fn _update_merkle_root(ref self: ContractState, index: u32, leaf: felt252) -> felt252 {
+            let mut current_hash = leaf;
+            let mut current_index = index;
 
-            if next_index == 0 {
-                return 0; // Empty tree
+            // Height of the tree (TREE_DEPTH = 20)
+            let mut level: u32 = 0;
+            while level < 20 {
+                let sibling_index = if current_index % 2 == 0 {
+                    current_index + 1
+                } else {
+                    current_index - 1
+                };
+
+                // Store current node
+                self.merkle_tree.nodes.entry((level, current_index)).write(current_hash);
+
+                // Get sibling (if it exists, otherwise use 0 or default empty hash)
+                let sibling = self.merkle_tree.nodes.entry((level, sibling_index)).read();
+
+                // Compute next level hash
+                if current_index % 2 == 0 {
+                    current_hash = zylith::privacy::merkle_tree::hash_nodes(current_hash, sibling);
+                } else {
+                    current_hash = zylith::privacy::merkle_tree::hash_nodes(sibling, current_hash);
+                }
+
+                current_index = current_index / 2;
+                level = level + 1;
             }
 
-            // Collect all leaves
+            current_hash
+        }
+
+        fn _recalculate_merkle_root(ref self: ContractState) -> felt252 {
+            let next_index = self.merkle_tree.next_index.read();
+            if next_index == 0 {
+                return 0;
+            }
             let mut leaves: Array<felt252> = ArrayTrait::new();
             let mut i: u32 = 0;
             while i < next_index {
-                let leaf = self.merkle_tree.leaves.entry(i).read();
-                leaves.append(leaf);
+                leaves.append(self.merkle_tree.leaves.entry(i).read());
                 i = i + 1;
             }
-
-            // Calculate root using the helper function
             zylith::privacy::merkle_tree::calculate_root_from_leaves(leaves)
         }
 

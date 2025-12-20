@@ -2,6 +2,7 @@
 pub mod commitment;
 pub mod deposit;
 pub mod merkle_tree;
+pub mod mock_verifier;
 pub mod verifier;
 
 pub mod verifiers {
