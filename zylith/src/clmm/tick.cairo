@@ -31,31 +31,36 @@ pub struct TickInfo {
 
 /// Get the word position and bit position for a tick
 pub fn position(tick: i32) -> (i32, i32) {
-    let word_pos = tick / 256;
-    let bit_pos = tick % 256;
+    let (word_pos, bit_pos) = if tick >= 0 {
+        (tick / 256, tick % 256)
+    } else {
+        // For negative ticks: -1 is word -1 bit 255, -256 is word -1 bit 0
+        let wp = (tick + 1) / 256 - 1;
+        let mut bp = tick % 256;
+        if bp < 0 {
+            bp = bp + 256;
+        };
+        (wp, bp)
+    };
     (word_pos, bit_pos)
 }
 
-/// Calculate 2^bit_pos for u256 using multiplication
-/// In Cairo, we use multiplication by powers of 2 instead of bit shifts
+/// Calculate 2^bit_pos for u256 (optimized O(log N))
 pub fn power_of_2_u256(bit_pos: i32) -> u256 {
-    if bit_pos == 0 {
-        return 1;
-    }
+    let mut bit_pos_u32: u32 = bit_pos.try_into().unwrap();
+    let mut res: u256 = 1;
+    let mut base: u256 = 2;
 
-    if bit_pos == 1 {
-        return 2;
-    }
-
-    // Use iterative multiplication: 2^bit_pos = 2 * 2^(bit_pos-1)
-    let mut result: u256 = 2;
-    let mut i = 1;
-    while i < bit_pos {
-        result = result * 2;
-        i = i + 1;
-    }
-
-    result
+    while bit_pos_u32 > 0 {
+        if bit_pos_u32 % 2 == 1 {
+            res = res * base;
+        }
+        if bit_pos_u32 > 1 {
+            base = base * base;
+        }
+        bit_pos_u32 = bit_pos_u32 / 2;
+    };
+    res
 }
 
 /// Helper: Check if a bit is set in a u256 word

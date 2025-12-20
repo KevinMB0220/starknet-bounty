@@ -11,7 +11,7 @@ pub struct PoolStorage {
     pub protocol_fee0: u128, // Protocol fee for token0 (in basis points, e.g., 500 = 5%)
     pub protocol_fee1: u128, // Protocol fee for token1 (in basis points)
     pub tick_spacing: i32,
-    pub sqrt_price_x96: u128,
+    pub sqrt_price_x128: u256,
     pub tick: i32,
     pub liquidity: u128,
     pub fee_growth_global0_x128: u256,
@@ -30,7 +30,7 @@ pub enum PoolEvent {
 
 #[derive(Drop, starknet::Event)]
 pub struct Initialize {
-    pub sqrt_price_x96: u128,
+    pub sqrt_price_x128: u256,
     pub tick: i32,
 }
 
@@ -40,7 +40,7 @@ pub struct Swap {
     pub zero_for_one: bool,
     pub amount0: i128,
     pub amount1: i128,
-    pub sqrt_price_x96: u128,
+    pub sqrt_price_x128: u256,
     pub liquidity: u128,
     pub tick: i32,
 }

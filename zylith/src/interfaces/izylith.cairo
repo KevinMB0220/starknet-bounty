@@ -11,7 +11,7 @@ pub trait IZylith<TContractState> {
         public_inputs: Array<felt252>,
         zero_for_one: bool,
         amount_specified: u128,
-        sqrt_price_limit_x96: u128,
+        sqrt_price_limit_x128: u256,
         new_commitment: felt252,
     ) -> (i128, i128);
 
@@ -30,7 +30,7 @@ pub trait IZylith<TContractState> {
         token1: ContractAddress,
         fee: u128,
         tick_spacing: i32,
-        sqrt_price_x96: u128,
+        sqrt_price_x128: u256,
     );
 
     fn mint(
@@ -41,7 +41,7 @@ pub trait IZylith<TContractState> {
         ref self: TContractState,
         zero_for_one: bool,
         amount_specified: u128,
-        sqrt_price_limit_x96: u128,
+        sqrt_price_limit_x128: u256,
     ) -> (i128, i128);
 
     fn burn(
