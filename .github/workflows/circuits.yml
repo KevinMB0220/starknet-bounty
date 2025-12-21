@@ -15,9 +15,6 @@ on:
 jobs:
   compile-circuits:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./zylith/circom
 
     steps:
       - name: Checkout code
@@ -38,6 +35,7 @@ jobs:
         run: circom --version
 
       - name: Install npm dependencies
+        working-directory: ./zylith/circom
         run: npm ci
 
       - name: Cache circuit builds
@@ -52,6 +50,7 @@ jobs:
             ${{ runner.os }}-circuits-
 
       - name: Compile circuits
+        working-directory: ./zylith/circom
         run: npm run compile
 
       - name: Upload circuit artifacts
