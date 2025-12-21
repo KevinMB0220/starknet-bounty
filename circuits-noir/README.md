@@ -20,16 +20,34 @@ Phase 1 has been completed with:
 - [x] First proof generated and verified successfully
 - [x] Documentation complete
 
+## Phase 2: Core Circuits ✅
+
+Phase 2 has been completed with:
+- [x] Swap circuit implemented
+- [x] Withdraw circuit implemented
+- [x] All circuits tested with sample data
+- [x] Documentation updated
+
 ## Directory Structure
 
 ```
 circuits-noir/
-├── membership/          # Membership proof circuit (Phase 1 - Complete)
+├── membership/          # Membership proof circuit (Phase 1 ✅)
 │   ├── src/
 │   │   └── main.nr     # Circuit implementation
 │   ├── target/         # Compiled artifacts, proofs, verification keys
 │   ├── Nargo.toml      # Package configuration
 │   └── Prover.toml     # Input values for proof generation
+├── swap/               # Private swap circuit (Phase 2 ✅)
+│   ├── src/
+│   │   └── main.nr     # Swap proof implementation
+│   ├── Nargo.toml
+│   └── Prover.toml
+├── withdraw/           # Private withdrawal circuit (Phase 2 ✅)
+│   ├── src/
+│   │   └── main.nr     # Withdrawal proof implementation
+│   ├── Nargo.toml
+│   └── Prover.toml
 ├── compute_values/     # Helper circuit for computing test values
 └── README.md           # This file
 ```
@@ -212,12 +230,80 @@ Barretenberg uses the **UltraHonk** proving system (PLONK variant):
 - Proof size: ~2-3 KB
 - Verification time: <10ms
 
-## Next Steps (Phase 2+)
+## Swap Circuit (Phase 2)
 
-- [ ] Implement swap circuit (Phase 2)
-- [ ] Implement withdraw circuit (Phase 2)
+The swap circuit proves a valid private swap in the CLMM with commitment updates.
+
+### Circuit Logic
+
+1. **Input Commitment Membership**: Verifies the input commitment exists in the Merkle tree
+2. **Old Commitment Verification**: Confirms old commitment matches input commitment
+3. **New Commitment Construction**: Verifies the output commitment is correctly formed
+4. **CLMM Swap Math**: Validates price transition and amount calculations (simplified in MVP)
+5. **Price Transition**: Ensures price moves in the correct direction based on swap type
+
+### Inputs
+
+**Public Inputs**:
+- `merkle_root`: Merkle tree root (Field)
+- `old_commitment`: Input commitment being spent (Field)
+- `new_commitment`: Output commitment being created (Field)
+- `sqrt_price_before`: Price before swap in Q96 format (u128)
+- `sqrt_price_after`: Price after swap in Q96 format (u128)
+- `liquidity`: Pool liquidity (u128)
+- `zero_for_one`: Swap direction (bool)
+
+**Private Inputs**:
+- `secret_in`, `nullifier_in`, `amount_in`: Input commitment components
+- `secret_out`, `nullifier_out`, `amount_out`: Output commitment components
+- `path_elements`, `path_indices`: Merkle proof for input commitment
+
+### TODO: Full CLMM Math
+
+The current implementation includes simplified checks. For production:
+- Implement Q96 fixed-point arithmetic
+- Verify constant product formula
+- Calculate exact price impact
+- Validate fee calculations
+- Match Cairo CLMM implementation precisely
+
+## Withdraw Circuit (Phase 2)
+
+The withdraw circuit proves authorization to withdraw funds from a commitment to a recipient address.
+
+### Circuit Logic
+
+1. **Nullifier Derivation**: Verifies nullifier is correctly derived from secret
+2. **Commitment Construction**: Verifies commitment structure
+3. **Merkle Proof**: Confirms commitment exists in tree
+4. **Withdrawal Authorization**: Validates withdrawal to recipient address
+
+### Inputs
+
+**Public Inputs**:
+- `merkle_root`: Merkle tree root (Field)
+- `commitment`: Commitment being withdrawn (Field)
+- `nullifier`: Nullifier to prevent double-spending (Field)
+- `recipient`: Destination address (Field)
+- `amount`: Withdrawal amount (u128)
+
+**Private Inputs**:
+- `secret`: Secret value proving ownership (Field)
+- `path_elements`, `path_indices`: Merkle proof [Field; 20]
+
+### Nullifier System
+
+The nullifier prevents double-spending:
+- Derived as: `nullifier = Poseidon(secret, 0)`
+- Published during withdrawal
+- Tracked on-chain to prevent reuse
+- Links secret to spent commitment without revealing it
+
+## Next Steps (Phase 3+)
+
 - [ ] Implement LP mint circuit (Phase 3)
 - [ ] Implement LP burn circuit (Phase 3)
+- [ ] Complete full CLMM math in swap circuit (Phase 3)
 - [ ] Research PLONK verification on Starknet (Phase 4)
 - [ ] Integrate with Cairo contracts (Phase 4)
 - [ ] Performance benchmarking (Phase 5)
