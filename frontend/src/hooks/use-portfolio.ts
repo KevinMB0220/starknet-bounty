@@ -16,6 +16,7 @@ interface PortfolioState {
   transactions: Transaction[]
   addNote: (note: Note) => void
   removeNote: (commitment: bigint) => void
+  updateNote: (oldCommitment: bigint, newNote: Note) => void
   addTransaction: (tx: Transaction) => void
   updateTransaction: (hash: string, status: Transaction['status']) => void
   getNotesByToken: (tokenAddress: string) => Note[]
@@ -34,6 +35,12 @@ export const usePortfolioStore = create<PortfolioState>()(
       
       removeNote: (commitment) => set((state) => ({
         notes: state.notes.filter(n => n.commitment !== commitment)
+      })),
+      
+      updateNote: (oldCommitment, newNote) => set((state) => ({
+        notes: state.notes.map(n => 
+          n.commitment === oldCommitment ? newNote : n
+        )
       })),
       
       addTransaction: (tx) => set((state) => ({
