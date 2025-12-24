@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals'
-import { generateCommitment, generateNote } from '../lib/commitment'
+import { generateCommitment, generateNote } from '../commitment'
 
 describe('Commitment Generation', () => {
   it('should generate a commitment from secret, nullifier, and amount', () => {
