@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect } from "react";
 import { sepolia, mainnet } from "@starknet-react/chains";
 import {
   StarknetConfig,
@@ -11,6 +11,25 @@ import {
   voyager,
 } from "@starknet-react/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { NotificationToast, useNotifications } from "@/components/shared/NotificationToast";
+import { setNotificationHandler } from "@/hooks/use-contract-events";
+
+function NotificationProvider({ children }: { children: React.ReactNode }) {
+  const { notification, showNotification, dismissNotification } = useNotifications();
+
+  useEffect(() => {
+    setNotificationHandler((type, title, message) => {
+      showNotification({ type, title, message });
+    });
+  }, [showNotification]);
+
+  return (
+    <>
+      {children}
+      <NotificationToast notification={notification} onDismiss={dismissNotification} />
+    </>
+  );
+}
 
 export function StarknetProvider({ children }: { children: React.ReactNode }) {
   const { connectors } = useInjectedConnectors({
@@ -36,7 +55,9 @@ export function StarknetProvider({ children }: { children: React.ReactNode }) {
       queryClient={queryClient}
     >
       <QueryClientProvider client={queryClient}>
-        {children}
+        <NotificationProvider>
+          {children}
+        </NotificationProvider>
       </QueryClientProvider>
     </StarknetConfig>
   );
