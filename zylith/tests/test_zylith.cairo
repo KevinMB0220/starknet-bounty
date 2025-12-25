@@ -1,4 +1,3 @@
-use starknet::SyscallResultTrait;
 use core::array::ArrayTrait;
 use core::integer::u128;
 use core::num::traits::Zero;
@@ -7,7 +6,7 @@ use snforge_std::{
     ContractClassTrait, DeclareResultTrait, declare, start_cheat_caller_address,
     stop_cheat_caller_address,
 };
-use starknet::ContractAddress;
+use starknet::{ContractAddress, SyscallResultTrait};
 use zylith::clmm::math;
 use zylith::interfaces::izylith::{IZylithDispatcher, IZylithDispatcherTrait};
 use zylith::mocks::erc20::{IMockERC20Dispatcher, IMockERC20DispatcherTrait};
@@ -302,17 +301,17 @@ fn test_private_deposit_updates_merkle_tree() {
 //     );
 //     stop_cheat_caller_address(setup.zylith.contract_address);
 
-
 //     let deposit_amount: u256 = 1_000_000_000_000_000_000; // 1 token
 //     let deposit_commitment: felt252 = 0x123456;
 
 //     start_cheat_caller_address(setup.zylith.contract_address, caller());
-//     setup.zylith.private_deposit(setup.token0.contract_address, deposit_amount, deposit_commitment);
-//     setup.zylith.private_deposit(setup.token1.contract_address, deposit_amount, deposit_commitment);
+//     setup.zylith.private_deposit(setup.token0.contract_address, deposit_amount,
+//     deposit_commitment);
+//     setup.zylith.private_deposit(setup.token1.contract_address, deposit_amount,
+//     deposit_commitment);
 //     stop_cheat_caller_address(setup.zylith.contract_address);
 
 //     let root_before_swap = setup.zylith.get_merkle_root();
-
 
 //     let nullifier: felt252 = 0x01;
 //     let new_commitment: felt252 = 0x999;
@@ -328,7 +327,6 @@ fn test_private_deposit_updates_merkle_tree() {
 //     let expected_amount0_delta: felt252 = 100;
 //     let expected_amount1_delta: felt252 = 200;
 //     let expected_new_tick: i32 = 0;
-
 
 //     let proof = array![
 //         nullifier,
@@ -354,7 +352,6 @@ fn test_private_deposit_updates_merkle_tree() {
 //         expected_new_tick.into(),
 //     ];
 
-
 //     start_cheat_caller_address(setup.zylith.contract_address, caller());
 //     let (amount0, amount1) = setup.zylith.private_swap(
 //         proof,
@@ -365,7 +362,6 @@ fn test_private_deposit_updates_merkle_tree() {
 //         new_commitment,
 //     );
 //     stop_cheat_caller_address(setup.zylith.contract_address);
-
 
 //     assert!(amount0 != 0 || amount1 != 0, "Swap should return non-zero amounts");
 //     assert!(
@@ -379,9 +375,6 @@ fn test_private_deposit_updates_merkle_tree() {
 //         "Merkle root should update after swap"
 //     );
 // }
-
-
-
 
 // #[test]
 // #[should_panic(expected: ('NULLIFIER_ALREADY_SPENT',))]
@@ -423,7 +416,8 @@ fn test_private_deposit_updates_merkle_tree() {
 
 //     let mut public_inputs = array![
 //         nullifier, current_root, new_commitment, amount_specified.into(), 1,
-//         (-100000).try_into().unwrap(), 99000.into(), sqrt_price_limit.try_into().unwrap(), 0.into(),
+//         (-100000).try_into().unwrap(), 99000.into(), sqrt_price_limit.try_into().unwrap(),
+//         0.into(),
 //     ];
 
 //     start_cheat_caller_address(setup.zylith.contract_address, caller());
@@ -445,7 +439,8 @@ fn test_private_deposit_updates_merkle_tree() {
 //     let mut public_inputs2 = array![
 //         nullifier, // Same nullifier!
 //         current_root, new_commitment2, amount_specified.into(), 1,
-//         (-100000).try_into().unwrap(), 99000.into(), sqrt_price_limit.try_into().unwrap(), 0.into(),
+//         (-100000).try_into().unwrap(), 99000.into(), sqrt_price_limit.try_into().unwrap(),
+//         0.into(),
 //     ];
 
 //     setup
@@ -483,12 +478,13 @@ fn test_private_deposit_updates_merkle_tree() {
 //     let deposit_commitment: felt252 = 0x123456;
 
 //     start_cheat_caller_address(setup.zylith.contract_address, caller());
-//     setup.zylith.private_deposit(setup.token0.contract_address, deposit_amount, deposit_commitment);
-//     setup.zylith.private_deposit(setup.token1.contract_address, deposit_amount, deposit_commitment);
+//     setup.zylith.private_deposit(setup.token0.contract_address, deposit_amount,
+//     deposit_commitment);
+//     setup.zylith.private_deposit(setup.token1.contract_address, deposit_amount,
+//     deposit_commitment);
 //     stop_cheat_caller_address(setup.zylith.contract_address);
 
 //     let root_before_swap = setup.zylith.get_merkle_root();
-
 
 //     // Swap parameters
 
@@ -507,7 +503,6 @@ fn test_private_deposit_updates_merkle_tree() {
 //     let expected_amount0_delta: felt252 = 100;
 //     let expected_amount1_delta: felt252 = 200;
 //     let expected_new_tick: i32 = 0;
-
 
 //     let proof = array![
 //         nullifier,
@@ -557,7 +552,7 @@ fn test_private_withdraw_with_valid_proof() {
     let setup = setup_with_erc20();
     initialize_pool(@setup);
 
-     // Initialize pool
+    // Initialize pool
 
     start_cheat_caller_address(setup.zylith.contract_address, caller());
     setup
@@ -585,17 +580,17 @@ fn test_private_withdraw_with_valid_proof() {
 
     let mut proof = array![0x999, current_root, recipient.into(), 500, 0x5, 0x6, 0x7, 0x8];
     let nullifier: felt252 = 0x999;
-    
+
     let withdraw_amount: u128 = 500; // 0.5 token
 
     let mut public_inputs = array![
         nullifier, current_root, recipient.into(), withdraw_amount.into(),
     ];
-    //  record old balance of token0 
+    //  record old balance of token0
 
     let balance_before = setup.token0.balance_of(recipient);
-    
-    // Now withdraw token0 
+
+    // Now withdraw token0
 
     start_cheat_caller_address(setup.zylith.contract_address, caller());
     setup
@@ -617,10 +612,10 @@ fn test_private_withdraw_with_valid_proof() {
 #[test]
 #[should_panic(expected: ('INVALID_TOKEN',))]
 fn test_private_withdraw_invalid_token_fails() {
-     let setup = setup_with_erc20();
+    let setup = setup_with_erc20();
     initialize_pool(@setup);
 
-     // Initialize pool
+    // Initialize pool
 
     start_cheat_caller_address(setup.zylith.contract_address, caller());
     setup
@@ -648,7 +643,7 @@ fn test_private_withdraw_invalid_token_fails() {
 
     let mut proof = array![0x999, current_root, recipient.into(), 500, 0x5, 0x6, 0x7, 0x8];
     let nullifier: felt252 = 0x999;
-    
+
     let withdraw_amount: u128 = 500; // 0.5 token
 
     let mut public_inputs = array![
@@ -657,10 +652,9 @@ fn test_private_withdraw_invalid_token_fails() {
 
     //  Fake TOken address
 
-    let token_fake  = deploy_mock_erc20('Tokenfake', 'TK');
-  
-    
-    // Now withdraw token0 
+    let token_fake = deploy_mock_erc20('Tokenfake', 'TK');
+
+    // Now withdraw token0
 
     start_cheat_caller_address(setup.zylith.contract_address, caller());
     setup
@@ -669,7 +663,6 @@ fn test_private_withdraw_invalid_token_fails() {
             proof, public_inputs, token_fake.contract_address, recipient, withdraw_amount,
         );
     stop_cheat_caller_address(setup.zylith.contract_address);
-
 }
 
 #[test]
@@ -678,7 +671,7 @@ fn test_private_withdraw_amount_mismatch_fails() {
     let setup = setup_with_erc20();
     initialize_pool(@setup);
 
-     // Initialize pool
+    // Initialize pool
 
     start_cheat_caller_address(setup.zylith.contract_address, caller());
     setup
@@ -701,19 +694,19 @@ fn test_private_withdraw_amount_mismatch_fails() {
     let current_root = setup.zylith.get_merkle_root();
     stop_cheat_caller_address(setup.zylith.contract_address);
 
-    // Prepare withdraw with  invalid amount 
+    // Prepare withdraw with  invalid amount
     let recipient = user2();
 
     let mut proof = array![0x999, current_root, recipient.into(), 50, 0x5, 0x6, 0x7, 0x8];
     let nullifier: felt252 = 0x999;
-    
-    let withdraw_amount: u128 = 500; 
+
+    let withdraw_amount: u128 = 500;
 
     let mut public_inputs = array![
         nullifier, current_root, recipient.into(), withdraw_amount.into(),
     ];
-    
-    // Now withdraw token0 
+
+    // Now withdraw token0
 
     start_cheat_caller_address(setup.zylith.contract_address, caller());
     setup
@@ -722,7 +715,6 @@ fn test_private_withdraw_amount_mismatch_fails() {
             proof, public_inputs, setup.token0.contract_address, recipient, withdraw_amount,
         );
     stop_cheat_caller_address(setup.zylith.contract_address);
-
 }
 
 // ============================================================================
@@ -789,13 +781,15 @@ fn test_private_burn_liquidity_with_valid_proof() {
     // Initialize pool
 
     start_cheat_caller_address(setup.zylith.contract_address, caller());
-    setup.zylith.initialize(
-        setup.token0.contract_address,
-        setup.token1.contract_address,
-        TEST_FEE,
-        TICK_SPACING,
-        sqrt_price,
-    );
+    setup
+        .zylith
+        .initialize(
+            setup.token0.contract_address,
+            setup.token1.contract_address,
+            TEST_FEE,
+            TICK_SPACING,
+            sqrt_price,
+        );
     stop_cheat_caller_address(setup.zylith.contract_address);
 
     // Private deposit
@@ -810,7 +804,6 @@ fn test_private_burn_liquidity_with_valid_proof() {
 
     let root_before_mint = setup.zylith.get_merkle_root();
 
-
     // Private mint liquidity
 
     let tick_lower: i32 = 120;
@@ -822,34 +815,26 @@ fn test_private_burn_liquidity_with_valid_proof() {
     let position_commitment: felt252 = 0x333;
 
     let mint_proof = array![
-        mint_nullifier,
-        root_before_mint,
-        tick_lower.into(),
-        tick_upper.into(),
-        minted_liquidity.into(),
-        new_commitment_after_mint,
-        position_commitment,
+        mint_nullifier, root_before_mint, tick_lower.into(), tick_upper.into(),
+        minted_liquidity.into(), new_commitment_after_mint, position_commitment,
     ];
 
     let mint_public_inputs = array![
-        mint_nullifier,
-        root_before_mint,
-        tick_lower.into(),
-        tick_upper.into(),
-        minted_liquidity.into(),
-        new_commitment_after_mint,
-        position_commitment,
+        mint_nullifier, root_before_mint, tick_lower.into(), tick_upper.into(),
+        minted_liquidity.into(), new_commitment_after_mint, position_commitment,
     ];
 
     start_cheat_caller_address(setup.zylith.contract_address, caller());
-    setup.zylith.private_mint_liquidity(
-        mint_proof,
-        mint_public_inputs,
-        tick_lower,
-        tick_upper,
-        minted_liquidity,
-        new_commitment_after_mint,
-    );
+    setup
+        .zylith
+        .private_mint_liquidity(
+            mint_proof,
+            mint_public_inputs,
+            tick_lower,
+            tick_upper,
+            minted_liquidity,
+            new_commitment_after_mint,
+        );
     stop_cheat_caller_address(setup.zylith.contract_address);
 
     let root_after_mint = setup.zylith.get_merkle_root();
@@ -861,39 +846,28 @@ fn test_private_burn_liquidity_with_valid_proof() {
     let new_commitment_after_burn: felt252 = 0x555;
 
     let burn_proof = array![
-        burn_nullifier,
-        root_after_mint,
-        tick_lower.into(),
-        tick_upper.into(),
-        burn_liquidity.into(),
-        new_commitment_after_burn,
-        position_commitment,
+        burn_nullifier, root_after_mint, tick_lower.into(), tick_upper.into(),
+        burn_liquidity.into(), new_commitment_after_burn, position_commitment,
     ];
 
     let burn_public_inputs = array![
-        burn_nullifier,
-        root_after_mint,
-        tick_lower.into(),
-        tick_upper.into(),
-        burn_liquidity.into(),
-        new_commitment_after_burn,
-        position_commitment,
+        burn_nullifier, root_after_mint, tick_lower.into(), tick_upper.into(),
+        burn_liquidity.into(), new_commitment_after_burn, position_commitment,
     ];
 
     start_cheat_caller_address(setup.zylith.contract_address, caller());
-    let (amount0, amount1) = setup.zylith.private_burn_liquidity(
-        burn_proof,
-        burn_public_inputs,
-        tick_lower,
-        tick_upper,
-        burn_liquidity,
-        new_commitment_after_burn,
-    );
+    let (amount0, amount1) = setup
+        .zylith
+        .private_burn_liquidity(
+            burn_proof,
+            burn_public_inputs,
+            tick_lower,
+            tick_upper,
+            burn_liquidity,
+            new_commitment_after_burn,
+        );
     stop_cheat_caller_address(setup.zylith.contract_address);
 
     assert!(amount0 > 0 || amount1 > 0, "Burn should return tokens");
-    assert!(
-        setup.zylith.is_nullifier_spent(burn_nullifier),
-        "Burn nullifier must be spent"
-    );
+    assert!(setup.zylith.is_nullifier_spent(burn_nullifier), "Burn nullifier must be spent");
 }

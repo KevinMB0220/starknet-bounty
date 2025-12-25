@@ -248,11 +248,12 @@ pub mod Zylith {
             let actual_new_sqrt_price = self.pool.sqrt_price_x128.read();
             let actual_new_tick = self.pool.tick.read();
 
-
-            //  for testing   after all thing good then remove it
-            println!("amount :{} expected amount0 : {}" , amount0 , expected_amount0_delta);
-            println!("amount :{} expected amount1 : {}" , amount1 , expected_amount1_delta);
-            println!("amount :{} expected amount1 : {}" , actual_new_sqrt_price , expected_new_sqrt_price);
+            //  for testing   after all thing good then remove
+            println!("amount :{} expected amount0 : {}", amount0, expected_amount0_delta);
+            println!("amount :{} expected amount1 : {}", amount1, expected_amount1_delta);
+            println!(
+                "amount :{} expected amount1 : {}", actual_new_sqrt_price, expected_new_sqrt_price,
+            );
 
             // Compare deltas - the proof's expected values must match actual execution
             assert(amount0 == expected_amount0_delta, 'AMOUNT0_DELTA_MISMATCH');
