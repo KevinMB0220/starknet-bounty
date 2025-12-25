@@ -7,8 +7,10 @@ import { usePortfolioStore } from "./use-portfolio"
 import { usePoolStore } from "@/stores/use-pool-store"
 import { generateNote, Note } from "@/lib/commitment"
 import { ZylithContractClient } from "@/lib/contracts/zylith-contract"
+import { Contract } from "starknet"
 import { CONFIG } from "@/lib/config"
 import { aspClient } from "@/lib/asp-client"
+import zylithAbi from "@/lib/abis/zylith-abi.json"
 
 interface SwapState {
   isLoading: boolean
@@ -130,20 +132,64 @@ export function usePrivateSwap() {
       const proof = proofData.full_proof_with_hints || proofData.proof
       const publicInputs = proofData.public_inputs || []
 
-      // Step 5: Execute swap on contract
+      // Step 5: Try to get prepared transaction from ASP, fallback to manual execution
       setState(prev => ({ ...prev, proofStep: "verifying" }))
       
-      const contractClient = new ZylithContractClient(provider)
+      let tx: any
       
-      const tx = await contractClient.privateSwap(
-        account,
-        proof,
-        publicInputs,
-        zeroForOne,
-        amountSpecified,
-        sqrtPriceLimitX128,
-        outputNote.commitment
-      )
+      try {
+        // Try to use ASP to prepare transaction
+        const prepareResponse = await aspClient.prepareSwap(
+          inputNote.secret.toString(),
+          inputNote.nullifier.toString(),
+          inputNote.amount.toString(),
+          inputNote.index!,
+          amountSpecified.toString(),
+          zeroForOne,
+          sqrtPriceLimitX128.low !== 0n || sqrtPriceLimitX128.high !== 0n
+            ? { low: sqrtPriceLimitX128.low.toString(), high: sqrtPriceLimitX128.high.toString() }
+            : undefined,
+          outputNote.secret.toString(),
+          outputNote.nullifier.toString(),
+          outputNote.amount.toString()
+        )
+
+        // Execute prepared transaction from ASP
+        if (prepareResponse.transactions && prepareResponse.transactions.length > 0) {
+          const preparedTx = prepareResponse.transactions[0]
+          tx = await account.execute({
+            contractAddress: preparedTx.contract_address,
+            entrypoint: preparedTx.entry_point,
+            calldata: preparedTx.calldata,
+          })
+          
+          // Update output note with commitment from ASP if provided
+          if (prepareResponse.new_commitment) {
+            outputNote.commitment = BigInt(prepareResponse.new_commitment)
+          }
+        } else {
+          throw new Error('ASP returned empty transactions')
+        }
+      } catch (aspError: any) {
+        // Fallback to manual execution if ASP is not ready or returns error
+        if (aspError.message?.includes('NOT_IMPLEMENTED') || aspError.message?.includes('not yet implemented')) {
+          console.warn('ASP swap preparation not yet implemented, using manual execution')
+        } else {
+          console.warn('ASP swap preparation failed, using manual execution:', aspError)
+        }
+        
+        // Manual execution (existing logic)
+        const contractClient = new ZylithContractClient(provider as any)
+        tx = await contractClient.privateSwap(
+          account as any,
+          proof,
+          publicInputs,
+          zeroForOne,
+          amountSpecified,
+          sqrtPriceLimitX128,
+          outputNote.commitment
+        )
+      }
 
       // Step 6: Track transaction
       addTransaction({
@@ -162,7 +208,7 @@ export function usePrivateSwap() {
       
       let outputLeafIndex: number | undefined
       
-      if (receipt.events) {
+      if (receipt && 'events' in receipt && receipt.events) {
         const swapEvent = receipt.events.find((event: any) => {
           const isFromZylith = event.from_address?.toLowerCase() === CONFIG.ZYLITH_CONTRACT.toLowerCase()
           const hasDepositSelector = event.keys && event.keys[0] === SWAP_EVENT_SELECTOR
@@ -198,37 +244,26 @@ export function usePrivateSwap() {
       // Step 10: Post-transaction synchronization
       // Verify Merkle root and pool state
       try {
-        const contractRoot = await contractClient.getMerkleRoot()
-        const eventRoot = receipt.events?.find((e: any) => 
+        // Use Contract directly for read calls
+        const contract = new Contract(zylithAbi, CONFIG.ZYLITH_CONTRACT, provider)
+        const contractRoot = await contract.get_merkle_root()
+        const receiptWithEvents = receipt as any
+        const eventRoot = receiptWithEvents?.events?.find((e: any) => 
           e.keys?.[0] === SWAP_EVENT_SELECTOR
         )?.data?.[2]
         
-        if (eventRoot && BigInt(eventRoot) !== contractRoot) {
+        if (eventRoot && BigInt(eventRoot) !== BigInt(contractRoot.toString())) {
           console.warn("Merkle root mismatch after swap. Event root:", eventRoot, "Contract root:", contractRoot.toString())
         }
 
         // Update pool price from Swap event data
         // Extract sqrt_price_x128 and tick from Swap event if available
-        const swapEvent = receipt.events?.find((e: any) => 
+        const swapEvent = receiptWithEvents?.events?.find((e: any) => 
           e.keys?.[0] === SWAP_EVENT_SELECTOR
         )
         
-        if (swapEvent && swapEvent.data) {
-          // TODO: Parse actual Swap event structure from ABI
-          // For now, try to get pool state from contract
-          try {
-            const poolState = await contractClient.getPoolState()
-            if (poolState) {
-              updatePoolState({
-                sqrtPriceX128: poolState.sqrtPriceX128,
-                tick: poolState.tick,
-                liquidity: poolState.liquidity,
-              })
-            }
-          } catch (poolError) {
-            console.warn("Failed to update pool state after swap:", poolError)
-          }
-        }
+        // TODO: Parse actual Swap event structure from ABI and update pool state
+        // For now, skip pool state update from events
       } catch (syncError) {
         console.warn("Failed to sync state after swap:", syncError)
         // Non-critical error, continue

@@ -3,10 +3,14 @@
 import { useState, useCallback } from "react"
 import { useStarknet } from "./use-starknet"
 import { useASP } from "./use-asp"
+import { aspClient } from "@/lib/asp-client"
 import { usePortfolioStore } from "./use-portfolio"
 import { useLPPositionStore } from "@/stores/use-lp-position-store"
 import { generateNote, Note } from "@/lib/commitment"
 import { ZylithContractClient } from "@/lib/contracts/zylith-contract"
+import { Contract } from "starknet"
+import { CONFIG } from "@/lib/config"
+import zylithAbi from "@/lib/abis/zylith-abi.json"
 
 interface LiquidityState {
   isLoading: boolean
@@ -63,7 +67,7 @@ export function useLiquidity() {
       // Step 1: Fetch Merkle Proof from ASP
       const merkleProof = await aspClientInstance.getMerkleProof(inputNote.index)
       const root = BigInt(merkleProof.root)
-      if (root === 0n) {
+      if (root === BigInt(0)) {
         throw new Error('Invalid Merkle root from ASP')
       }
 
@@ -113,19 +117,62 @@ export function useLiquidity() {
       const proof = proofData.full_proof_with_hints || proofData.proof
       const publicInputs = proofData.public_inputs || []
 
-      // Step 5: Execute mint on contract
+      // Step 5: Try to get prepared transaction from ASP, fallback to manual execution
       setState(prev => ({ ...prev, proofStep: "verifying" }))
-      const contractClient = new ZylithContractClient(provider)
       
-      const tx = await contractClient.privateMintLiquidity(
-        account,
-        proof,
-        publicInputs,
-        tickLower,
-        tickUpper,
-        liquidity,
-        changeNote.commitment
-      )
+      let tx: any
+      
+      try {
+        // Try to use ASP to prepare transaction
+        const prepareResponse = await aspClient.prepareMintLiquidity(
+          inputNote.secret.toString(),
+          inputNote.nullifier.toString(),
+          inputNote.amount.toString(),
+          inputNote.index!,
+          tickLower,
+          tickUpper,
+          liquidity.toString(),
+          changeNote.secret.toString(),
+          changeNote.nullifier.toString(),
+          changeNote.amount.toString()
+        )
+
+        // Execute prepared transaction from ASP
+        if (prepareResponse.transactions && prepareResponse.transactions.length > 0) {
+          const preparedTx = prepareResponse.transactions[0]
+          tx = await account.execute({
+            contractAddress: preparedTx.contract_address,
+            entrypoint: preparedTx.entry_point,
+            calldata: preparedTx.calldata,
+          })
+          
+          // Update change note with commitment from ASP if provided
+          if (prepareResponse.new_commitment) {
+            changeNote.commitment = BigInt(prepareResponse.new_commitment)
+          }
+        } else {
+          throw new Error('ASP returned empty transactions')
+        }
+      } catch (aspError: any) {
+        // Fallback to manual execution if ASP is not ready or returns error
+        if (aspError.message?.includes('NOT_IMPLEMENTED') || aspError.message?.includes('not yet implemented')) {
+          console.warn('ASP mint liquidity preparation not yet implemented, using manual execution')
+        } else {
+          console.warn('ASP mint liquidity preparation failed, using manual execution:', aspError)
+        }
+        
+        // Manual execution (existing logic)
+        // Use Contract directly to avoid type issues
+        const contract = new Contract(zylithAbi, CONFIG.ZYLITH_CONTRACT, account)
+        tx = await contract.private_mint_liquidity(
+          proof,
+          publicInputs,
+          tickLower,
+          tickUpper,
+          liquidity,
+          changeNote.commitment
+        )
+      }
 
       // Step 6: Track transaction
       addTransaction({
@@ -160,10 +207,10 @@ export function useLiquidity() {
           tickLower,
           tickUpper,
           liquidity,
-          feeGrowthInside0LastX128: 0n, // Will be updated from contract events
-          feeGrowthInside1LastX128: 0n, // Will be updated from contract events
-          tokensOwed0: 0n,
-          tokensOwed1: 0n,
+          feeGrowthInside0LastX128: BigInt(0), // Will be updated from contract events
+          feeGrowthInside1LastX128: BigInt(0), // Will be updated from contract events
+          tokensOwed0: BigInt(0),
+          tokensOwed1: BigInt(0),
           createdAt: Date.now(),
           lastUpdated: Date.now(),
         })
@@ -217,7 +264,7 @@ export function useLiquidity() {
       // Step 1: Fetch Merkle Proof
       const merkleProof = await aspClientInstance.getMerkleProof(inputNote.index)
       const root = BigInt(merkleProof.root)
-      if (root === 0n) {
+      if (root === BigInt(0)) {
         throw new Error('Invalid Merkle root from ASP')
       }
 
@@ -266,17 +313,60 @@ export function useLiquidity() {
       const publicInputs = proofData.public_inputs || []
 
       setState(prev => ({ ...prev, proofStep: "verifying" }))
-      const contractClient = new ZylithContractClient(provider)
       
-      const tx = await contractClient.privateBurnLiquidity(
-        account,
-        proof,
-        publicInputs,
-        tickLower,
-        tickUpper,
-        liquidity,
-        outputNote.commitment
-      )
+      let tx: any
+      
+      try {
+        // Try to use ASP to prepare transaction
+        const prepareResponse = await aspClient.prepareBurnLiquidity(
+          inputNote.secret.toString(),
+          inputNote.nullifier.toString(),
+          inputNote.amount.toString(),
+          inputNote.index!,
+          tickLower,
+          tickUpper,
+          liquidity.toString(),
+          outputNote.secret.toString(),
+          outputNote.nullifier.toString(),
+          outputNote.amount.toString()
+        )
+
+        // Execute prepared transaction from ASP
+        if (prepareResponse.transactions && prepareResponse.transactions.length > 0) {
+          const preparedTx = prepareResponse.transactions[0]
+          tx = await account.execute({
+            contractAddress: preparedTx.contract_address,
+            entrypoint: preparedTx.entry_point,
+            calldata: preparedTx.calldata,
+          })
+          
+          // Update output note with commitment from ASP if provided
+          if (prepareResponse.new_commitment) {
+            outputNote.commitment = BigInt(prepareResponse.new_commitment)
+          }
+        } else {
+          throw new Error('ASP returned empty transactions')
+        }
+      } catch (aspError: any) {
+        // Fallback to manual execution if ASP is not ready or returns error
+        if (aspError.message?.includes('NOT_IMPLEMENTED') || aspError.message?.includes('not yet implemented')) {
+          console.warn('ASP burn liquidity preparation not yet implemented, using manual execution')
+        } else {
+          console.warn('ASP burn liquidity preparation failed, using manual execution:', aspError)
+        }
+        
+        // Manual execution (existing logic)
+        // Use Contract directly to avoid type issues
+        const contract = new Contract(zylithAbi, CONFIG.ZYLITH_CONTRACT, account)
+        tx = await contract.private_burn_liquidity(
+          proof,
+          publicInputs,
+          tickLower,
+          tickUpper,
+          liquidity,
+          outputNote.commitment
+        )
+      }
 
       addTransaction({
         hash: tx.transaction_hash,
@@ -298,9 +388,9 @@ export function useLiquidity() {
       if (existingPosition) {
         const newLiquidity = existingPosition.liquidity > liquidity 
           ? existingPosition.liquidity - liquidity 
-          : 0n
+          : BigInt(0)
         
-        if (newLiquidity === 0n) {
+        if (newLiquidity === BigInt(0)) {
           // Remove position if all liquidity is burned
           removePosition(positionId)
         } else {
@@ -358,7 +448,7 @@ export function useLiquidity() {
       // Step 1: Fetch Merkle Proof
       const merkleProof = await aspClientInstance.getMerkleProof(inputNote.index)
       const root = BigInt(merkleProof.root)
-      if (root === 0n) {
+      if (root === BigInt(0)) {
         throw new Error('Invalid Merkle root from ASP')
       }
 
@@ -406,10 +496,10 @@ export function useLiquidity() {
       const publicInputs = proofData.public_inputs || []
 
       setState(prev => ({ ...prev, proofStep: "verifying" }))
-      const contractClient = new ZylithContractClient(provider)
+      // Use Contract directly to avoid type issues
+      const contract = new Contract(zylithAbi, CONFIG.ZYLITH_CONTRACT, account)
       
-      const tx = await contractClient.privateCollect(
-        account,
+      const tx = await contract.private_collect(
         proof,
         publicInputs,
         tickLower,
@@ -439,8 +529,8 @@ export function useLiquidity() {
         // Note: We don't know the exact amounts collected without parsing events
         // This will be updated when we process Collect events
         updatePosition(positionId, {
-          tokensOwed0: 0n, // Will be updated from contract events
-          tokensOwed1: 0n, // Will be updated from contract events
+          tokensOwed0: BigInt(0), // Will be updated from contract events
+          tokensOwed1: BigInt(0), // Will be updated from contract events
           lastUpdated: Date.now(),
         })
       }

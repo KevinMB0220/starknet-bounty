@@ -51,3 +51,50 @@ export interface ProofResponse {
   merkle_proof?: MerkleProof
 }
 
+// ASP Transaction Preparation Types
+export interface PreparedTransaction {
+  contract_address: string
+  entry_point: string
+  calldata: string[]
+}
+
+export interface NoteData {
+  secret: string
+  nullifier: string
+  amount: string
+}
+
+export interface DepositPrepareResponse {
+  transactions: PreparedTransaction[]
+  commitment: string
+  note_data: NoteData
+}
+
+export interface SwapPrepareResponse {
+  transactions: PreparedTransaction[]
+  new_commitment: string
+  output_note_data: NoteData
+}
+
+export interface WithdrawPrepareResponse {
+  transactions: PreparedTransaction[]
+}
+
+export interface LiquidityPrepareResponse {
+  transactions: PreparedTransaction[]
+  new_commitment: string
+  output_note_data: NoteData
+}
+
+export interface InitializePrepareResponse {
+  transactions: PreparedTransaction[]
+  token0: string
+  token1: string
+  fee: number
+  tick_spacing: number
+  sqrt_price_x128: {
+    low: string
+    high: string
+  }
+}
+

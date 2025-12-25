@@ -1,13 +1,13 @@
 "use client"
 
 import { useState, useCallback } from 'react'
-import { Account, Contract, RpcProvider } from 'starknet'
 import { useStarknet } from './use-starknet'
 import { usePortfolioStore } from './use-portfolio'
-import { generateNote, Note, toHex } from '@/lib/commitment'
-import { getZylithContract } from '@/lib/contracts/zylith-contract'
+import { Note } from '@/lib/commitment'
 import { CONFIG } from '@/lib/config'
-import erc20Abi from '@/lib/abis/erc20-abi.json'
+import { aspClient } from '@/lib/asp-client'
+import { Contract } from 'starknet'
+import zylithAbi from '@/lib/abis/zylith-abi.json'
 
 interface DepositState {
   isLoading: boolean
@@ -16,7 +16,7 @@ interface DepositState {
 
 /**
  * Hook for private deposits
- * Handles the complete flow: generate note, approve tokens, deposit, and save to portfolio
+ * Uses ASP to prepare transactions, then executes them with user's wallet
  */
 export function usePrivateDeposit() {
   const { account, provider } = useStarknet()
@@ -26,31 +26,6 @@ export function usePrivateDeposit() {
     isLoading: false,
     error: null,
   })
-
-  /**
-   * Approve ERC20 tokens for the Zylith contract
-   */
-  const approveTokens = useCallback(async (
-    tokenAddress: string,
-    amount: bigint,
-    account: Account
-  ): Promise<void> => {
-    const tokenContract = new Contract(erc20Abi, tokenAddress, account)
-    
-    // Convert amount to u256 format (low, high)
-    const amountU256 = {
-      low: amount & BigInt('0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF'),
-      high: amount >> BigInt(128),
-    }
-
-    const tx = await tokenContract.approve(
-      CONFIG.ZYLITH_CONTRACT,
-      amountU256
-    )
-
-    // Wait for transaction to be accepted
-    await provider.waitForTransaction(tx.transaction_hash)
-  }, [provider])
 
   /**
    * Execute private deposit
@@ -65,51 +40,72 @@ export function usePrivateDeposit() {
       throw new Error('Account not connected')
     }
 
+    if (!account.address) {
+      throw new Error('Account address not available')
+    }
+
     setState({ isLoading: true, error: null })
 
     try {
-      // Step 1: Generate commitment (note)
-      const note = generateNote(amount, tokenAddress)
-
-      // Step 2: Approve tokens
-      await approveTokens(tokenAddress, amount, account)
-
-      // Step 3: Call private_deposit on Zylith contract
-      const zylithContract = getZylithContract(account)
-      
-      // Convert amount to u256 format
-      const amountU256 = {
-        low: amount & BigInt('0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF'),
-        high: amount >> BigInt(128),
-      }
-
-      const tx = await zylithContract.private_deposit(
+      // Step 1: Get prepared transactions from ASP
+      // ASP generates note, commitment, and prepares approve + deposit transactions
+      const prepareResponse = await aspClient.prepareDeposit(
+        amount.toString(),
         tokenAddress,
-        amountU256,
-        note.commitment
+        account.address
       )
 
-      // Step 4: Add transaction to portfolio
-      addTransaction({
-        hash: tx.transaction_hash,
-        type: 'deposit',
-        status: 'pending',
-        timestamp: Date.now(),
-      })
+      // Step 2: Execute each prepared transaction
+      const transactionHashes: string[] = []
 
-      // Step 5: Wait for transaction and get events
-      const receipt = await provider.waitForTransaction(tx.transaction_hash)
+      for (const tx of prepareResponse.transactions) {
+        // Execute transaction using account.execute()
+        const result = await account.execute({
+          contractAddress: tx.contract_address,
+          entrypoint: tx.entry_point,
+          calldata: tx.calldata,
+        })
+
+        transactionHashes.push(result.transaction_hash)
+
+        // Add transaction to portfolio
+        // Note: We only track the deposit transaction, approve is internal
+        if (tx.entry_point === 'private_deposit') {
+          addTransaction({
+            hash: result.transaction_hash,
+            type: 'deposit',
+            status: 'pending',
+            timestamp: Date.now(),
+          })
+        }
+
+        // Wait for transaction to be accepted (with timeout)
+        // Use a shorter timeout to avoid hanging too long
+        try {
+          await Promise.race([
+            provider.waitForTransaction(result.transaction_hash),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Transaction timeout')), 60000) // 60 second timeout
+            )
+          ])
+        } catch (timeoutError) {
+          console.warn(`Transaction ${result.transaction_hash} timeout, but continuing...`)
+          // Continue even if timeout - transaction may still be processing
+        }
+      }
+
+      // Step 3: Extract leaf_index from Deposit event
+      // Get the deposit transaction receipt (last one)
+      const depositTxHash = transactionHashes[transactionHashes.length - 1]
+      const receipt = await provider.getTransactionReceipt(depositTxHash)
       
-      // Step 6: Extract leaf_index from Deposit event
-      // Deposit event selector: starknet_keccak("Deposit") truncated to 250 bits
-      // This matches the selector used in the ASP syncer
       const DEPOSIT_EVENT_SELECTOR = '0x9149d2123147c5f43d258257fef0b7b969db78269369ebcf5ebb9eef8592f2'
       
       let leafIndex: number | undefined
       
-      if (receipt.events) {
+      // Check if receipt has events (type guard)
+      if (receipt && 'events' in receipt && receipt.events) {
         const depositEvent = receipt.events.find((event: any) => {
-          // Check if event is from Zylith contract and has Deposit selector
           const isFromZylith = event.from_address?.toLowerCase() === CONFIG.ZYLITH_CONTRACT.toLowerCase()
           const hasDepositSelector = event.keys && event.keys[0] === DEPOSIT_EVENT_SELECTOR
           return isFromZylith && hasDepositSelector
@@ -118,40 +114,51 @@ export function usePrivateDeposit() {
         if (depositEvent && depositEvent.data && depositEvent.data.length >= 3) {
           // Deposit event structure: [commitment, leaf_index, root]
           const eventCommitment = BigInt(depositEvent.data[0])
+          const expectedCommitment = BigInt(prepareResponse.commitment)
           
           // Verify commitment matches
-          if (eventCommitment === note.commitment) {
+          if (eventCommitment === expectedCommitment) {
             leafIndex = Number(depositEvent.data[1])
           }
         }
       }
 
       // Fallback: If leaf index not found in events, log warning
-      // The ASP should sync this eventually, but user may need to refresh
       if (leafIndex === undefined) {
         console.warn('Leaf index not found in deposit event. ASP may need time to sync.')
       }
 
-      // Step 7: Update note with leaf index and save to portfolio
-      const noteWithIndex: Note = {
-        ...note,
+      // Step 4: Create note from ASP response and save to portfolio
+      const note: Note = {
+        secret: BigInt(prepareResponse.note_data.secret),
+        nullifier: BigInt(prepareResponse.note_data.nullifier),
+        amount: BigInt(prepareResponse.note_data.amount),
+        commitment: BigInt(prepareResponse.commitment),
+        tokenAddress,
         index: leafIndex,
       }
 
-      addNote(noteWithIndex)
-      updateTransaction(tx.transaction_hash, 'success')
+      addNote(note)
+      
+      // Update transaction statuses
+      transactionHashes.forEach(hash => {
+        updateTransaction(hash, 'success')
+      })
 
-      // Step 8: Post-transaction synchronization
-      // Verify Merkle root from contract matches our expectation
+      // Step 5: Post-transaction synchronization (optional verification)
       try {
-        const contractClient = new ZylithContractClient(provider)
-        const contractRoot = await contractClient.getMerkleRoot()
-        const eventRoot = receipt.events?.find((e: any) => 
-          e.keys?.[0] === DEPOSIT_EVENT_SELECTOR
-        )?.data?.[2]
+        // Use Contract directly for read calls
+        const contract = new Contract(zylithAbi, CONFIG.ZYLITH_CONTRACT, provider)
+        const contractRoot = await contract.get_merkle_root()
         
-        if (eventRoot && BigInt(eventRoot) !== contractRoot) {
-          console.warn("Merkle root mismatch after deposit. Event root:", eventRoot, "Contract root:", contractRoot.toString())
+        if (receipt && 'events' in receipt && receipt.events) {
+          const eventRoot = receipt.events.find((e: any) => 
+            e.keys?.[0] === DEPOSIT_EVENT_SELECTOR
+          )?.data?.[2]
+          
+          if (eventRoot && BigInt(eventRoot) !== BigInt(contractRoot.toString())) {
+            console.warn("Merkle root mismatch after deposit. Event root:", eventRoot, "Contract root:", contractRoot.toString())
+          }
         }
       } catch (syncError) {
         console.warn("Failed to sync Merkle root after deposit:", syncError)
@@ -159,7 +166,7 @@ export function usePrivateDeposit() {
       }
 
       setState({ isLoading: false, error: null })
-      return noteWithIndex
+      return note
 
     } catch (error: any) {
       const errorMessage = error?.message || 'Deposit failed'
@@ -172,7 +179,7 @@ export function usePrivateDeposit() {
       
       throw error
     }
-  }, [account, provider, approveTokens, addNote, addTransaction, updateTransaction])
+  }, [account, provider, addNote, addTransaction, updateTransaction])
 
   return {
     deposit,

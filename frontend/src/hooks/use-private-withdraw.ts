@@ -3,10 +3,13 @@
 import { useState, useCallback } from 'react'
 import { useStarknet } from './use-starknet'
 import { useASP } from './use-asp'
+import { aspClient } from '@/lib/asp-client'
 import { usePortfolioStore } from './use-portfolio'
 import { Note } from '@/lib/commitment'
 import { ZylithContractClient } from '@/lib/contracts/zylith-contract'
 import { CONFIG } from '@/lib/config'
+import { Contract } from "starknet"
+import zylithAbi from "@/lib/abis/zylith-abi.json"
 
 interface WithdrawState {
   isLoading: boolean
@@ -105,17 +108,50 @@ export function usePrivateWithdraw() {
       const proof = proofData.full_proof_with_hints || proofData.proof
       const publicInputs = proofData.public_inputs || []
 
-      // Step 4: Execute withdraw on contract
-      const contractClient = new ZylithContractClient(provider)
+      // Step 4: Try to get prepared transaction from ASP, fallback to manual execution
+      let tx: any
       
-      const tx = await contractClient.privateWithdraw(
-        account,
-        proof,
-        publicInputs,
-        finalTokenAddress,
-        recipient,
-        amount
-      )
+      try {
+        // Try to use ASP to prepare transaction
+        const prepareResponse = await aspClient.prepareWithdraw(
+          note.secret.toString(),
+          note.nullifier.toString(),
+          note.amount.toString(),
+          note.index!,
+          recipient,
+          finalTokenAddress
+        )
+
+        // Execute prepared transaction from ASP
+        if (prepareResponse.transactions && prepareResponse.transactions.length > 0) {
+          const preparedTx = prepareResponse.transactions[0]
+          tx = await account.execute({
+            contractAddress: preparedTx.contract_address,
+            entrypoint: preparedTx.entry_point,
+            calldata: preparedTx.calldata,
+          })
+        } else {
+          throw new Error('ASP returned empty transactions')
+        }
+      } catch (aspError: any) {
+        // Fallback to manual execution if ASP is not ready or returns error
+        if (aspError.message?.includes('NOT_IMPLEMENTED') || aspError.message?.includes('not yet implemented')) {
+          console.warn('ASP withdraw preparation not yet implemented, using manual execution')
+        } else {
+          console.warn('ASP withdraw preparation failed, using manual execution:', aspError)
+        }
+        
+        // Manual execution (existing logic)
+        const contractClient = new ZylithContractClient(provider as any)
+        tx =         await contractClient.privateWithdraw(
+          account as any,
+          proof,
+          publicInputs,
+          finalTokenAddress,
+          recipient,
+          amount
+        )
+      }
 
       // Step 5: Track transaction
       addTransaction({
@@ -144,7 +180,9 @@ export function usePrivateWithdraw() {
       // Step 8: Post-transaction synchronization
       // Verify Merkle root after withdraw
       try {
-        const contractRoot = await contractClient.getMerkleRoot()
+        // Use Contract directly for read calls
+        const contract = new Contract(zylithAbi, CONFIG.ZYLITH_CONTRACT, provider)
+        const contractRoot = await contract.get_merkle_root()
         // Withdraw doesn't emit a new root in the same way, but we can verify the nullifier was spent
         // TODO: Verify nullifier is marked as spent
       } catch (syncError) {
