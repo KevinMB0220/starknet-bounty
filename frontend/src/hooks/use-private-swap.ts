@@ -164,16 +164,42 @@ export function usePrivateSwap() {
       setState(prev => ({ ...prev, proofStep: "calculating_clmm" }))
       console.log("[Frontend] 🔧 Step 1: Calculating CLMM values...")
       
+      // Helper function to convert i128 negative values to two's complement representation
+      // For i128: negative value -n is represented as u256: 2^128 - n
+      // This ensures BigUint in Rust can parse the value correctly
+      const TWO_TO_128 = BigInt("340282366920938463463374607431768211456") // 2^128
+      const I128_MAX = BigInt("170141183460469231731687303715884105727") // 2^127 - 1
+      
+      function i128ToU256(value: bigint): bigint {
+        if (value < 0n) {
+          // Two's complement: 2^128 - |value|
+          // value is already negative, so we add it (subtract absolute value)
+          return TWO_TO_128 + value // value is negative, so this is 2^128 - |value|
+        }
+        // For positive values, ensure they're within i128 range
+        if (value > I128_MAX) {
+          throw new Error(`Value ${value.toString()} exceeds i128 maximum (${I128_MAX.toString()})`)
+        }
+        return value
+      }
+      
       // TODO: These values need to come from CLMM state or be calculated
       // For now, using placeholder values - these should be fetched from the pool
-      const amount0Delta = zeroForOne ? -BigInt(amountSpecified) : 0n
-      const amount1Delta = zeroForOne ? 0n : -BigInt(amountSpecified)
+      const amount0DeltaRaw = zeroForOne ? -BigInt(amountSpecified) : 0n
+      const amount1DeltaRaw = zeroForOne ? 0n : -BigInt(amountSpecified)
+      
+      // Convert to two's complement representation for negative values
+      const amount0Delta = i128ToU256(amount0DeltaRaw)
+      const amount1Delta = i128ToU256(amount1DeltaRaw)
+      
       const newSqrtPriceX128 = { low: 0n, high: 0n } // Should be calculated from CLMM
       const newTick = 0 // Should be calculated from CLMM
       
       console.log("[Frontend] 📊 Initial CLMM parameters:", {
         amountSpecified: amountSpecified.toString(),
         zeroForOne,
+        amount0DeltaRaw: amount0DeltaRaw.toString(),
+        amount1DeltaRaw: amount1DeltaRaw.toString(),
         amount0Delta: amount0Delta.toString(),
         amount1Delta: amount1Delta.toString()
       })

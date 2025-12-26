@@ -3,12 +3,31 @@
 import { Button } from "@/components/ui/button"
 import { useInitializePool } from "@/hooks/use-initialize-pool"
 import { useAccount } from "@starknet-react/core"
-import { AlertCircle, Loader2 } from "lucide-react"
+import { AlertCircle, Loader2, CheckCircle2 } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { aspClient } from "@/lib/asp-client"
+import { useEffect, useState } from "react"
 
 export function InitializePoolButton() {
   const { account } = useAccount()
   const { initialize, isInitializing } = useInitializePool()
+  const [isPoolInitialized, setIsPoolInitialized] = useState<boolean | null>(null)
+  const [checking, setChecking] = useState(true)
+
+  useEffect(() => {
+    const checkInitialized = async () => {
+      try {
+        const response = await aspClient.isPoolInitialized()
+        setIsPoolInitialized(response.initialized)
+      } catch (error) {
+        console.error("Failed to check pool status:", error)
+        setIsPoolInitialized(false)
+      } finally {
+        setChecking(false)
+      }
+    }
+    checkInitialized()
+  }, [])
 
   if (!account) {
     return (
@@ -17,6 +36,27 @@ export function InitializePoolButton() {
         <AlertTitle>Wallet not connected</AlertTitle>
         <AlertDescription>
           Please connect your wallet to initialize the pool.
+        </AlertDescription>
+      </Alert>
+    )
+  }
+
+  if (checking) {
+    return (
+      <Alert>
+        <Loader2 className="h-4 w-4 animate-spin" />
+        <AlertTitle>Checking pool status...</AlertTitle>
+      </Alert>
+    )
+  }
+
+  if (isPoolInitialized) {
+    return (
+      <Alert className="border-green-500">
+        <CheckCircle2 className="h-4 w-4 text-green-500" />
+        <AlertTitle className="text-green-400">Pool Already Initialized</AlertTitle>
+        <AlertDescription>
+          The pool has already been initialized. You can now make deposits, swaps, and add liquidity.
         </AlertDescription>
       </Alert>
     )

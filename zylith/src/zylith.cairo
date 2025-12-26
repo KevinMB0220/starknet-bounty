@@ -226,10 +226,48 @@ pub mod Zylith {
             let verified_new_commitment: felt252 = (*_verified_inputs.at(2)).try_into().unwrap();
             let verified_amount: u128 = (*_verified_inputs.at(3)).low;
             // Indices 5-8: expected swap transition outputs (will be verified after execution)
-            let expected_amount0_delta: i128 = (*_verified_inputs.at(5)).low.try_into().unwrap();
-            let expected_amount1_delta: i128 = (*_verified_inputs.at(6)).low.try_into().unwrap();
+            // Convert u256 to i128 safely (handles two's complement for negative values)
+            // Negative i128 values are sent as u256: 2^128 - |value|
+            // If value >= 2^127, it represents a negative number in two's complement
+            let amount0_delta_u256 = *_verified_inputs.at(5);
+            let expected_amount0_delta: i128 = if amount0_delta_u256.low >= 170141183460469231731687303715884105728 { // 2^127
+                // Negative value in two's complement: 2^128 - value
+                let two_to_128: u256 = 340282366920938463463374607431768211456; // 2^128
+                let value_u256: u256 = amount0_delta_u256.low.into();
+                let complement: u256 = two_to_128 - value_u256; // 2^128 - value
+                let neg_val: i128 = complement.low.try_into().unwrap();
+                -neg_val
+            } else {
+                amount0_delta_u256.low.try_into().unwrap()
+            };
+            
+            let amount1_delta_u256 = *_verified_inputs.at(6);
+            let expected_amount1_delta: i128 = if amount1_delta_u256.low >= 170141183460469231731687303715884105728 { // 2^127
+                // Negative value in two's complement: 2^128 - value
+                let two_to_128: u256 = 340282366920938463463374607431768211456; // 2^128
+                let value_u256: u256 = amount1_delta_u256.low.into();
+                let complement: u256 = two_to_128 - value_u256; // 2^128 - value
+                let neg_val: i128 = complement.low.try_into().unwrap();
+                -neg_val
+            } else {
+                amount1_delta_u256.low.try_into().unwrap()
+            };
+            
             let expected_new_sqrt_price: u256 = *_verified_inputs.at(7);
-            let expected_new_tick: i32 = (*_verified_inputs.at(8)).low.try_into().unwrap();
+            // Convert u256 to i32 safely (handles two's complement for negative values)
+            // Negative i32 values are sent as u256: 2^32 - |value|
+            // If value >= 2^31, it represents a negative number in two's complement
+            let new_tick_u256 = *_verified_inputs.at(8);
+            let expected_new_tick: i32 = if new_tick_u256.low >= 2147483648 { // 2^31
+                // Negative value in two's complement: 2^32 - value
+                let two_to_32: u256 = 4294967296; // 2^32
+                let value_u256: u256 = new_tick_u256.low.into();
+                let complement: u256 = two_to_32 - value_u256; // 2^32 - value
+                let neg_val: i32 = complement.low.try_into().unwrap();
+                -neg_val
+            } else {
+                new_tick_u256.low.try_into().unwrap()
+            };
 
             // CRITICAL: Verify root is known (current OR historical)
             // This allows users to use proofs generated against older roots
@@ -291,9 +329,18 @@ pub mod Zylith {
             amount: u128,
         ) {
             // Step 1 - Verify ZK proof using Garaga verifier
+            // Garaga verifier expects full_proof_with_hints = [proof (8 elements) + public_inputs]
+            let mut full_proof_with_hints = proof;
+            let mut i = 0;
+            let public_inputs_len = public_inputs.len();
+            while i < public_inputs_len {
+                full_proof_with_hints.append(*public_inputs.at(i));
+                i += 1;
+            }
+            
             let withdraw_verifier_addr = self.withdraw_verifier.read();
             let verifier = IWithdrawVerifier { contract_address: withdraw_verifier_addr };
-            let result = verifier.verify_groth16_proof_bn254(proof.span());
+            let result = verifier.verify_groth16_proof_bn254(full_proof_with_hints.span());
 
             let _verified_inputs = match result {
                 Result::Ok(v) => v,
@@ -378,9 +425,18 @@ pub mod Zylith {
             new_commitment: felt252,
         ) -> (u128, u128) {
             // Step 1 - Verify ZK proof using Garaga LP verifier
+            // Garaga verifier expects full_proof_with_hints = [proof (8 elements) + public_inputs]
+            let mut full_proof_with_hints = proof;
+            let mut i = 0;
+            let public_inputs_len = public_inputs.len();
+            while i < public_inputs_len {
+                full_proof_with_hints.append(*public_inputs.at(i));
+                i += 1;
+            }
+            
             let lp_verifier_addr = self.lp_verifier.read();
             let verifier = ILPVerifier { contract_address: lp_verifier_addr };
-            let result = verifier.verify_groth16_proof_bn254(proof.span());
+            let result = verifier.verify_groth16_proof_bn254(full_proof_with_hints.span());
 
             let _verified_inputs = match result {
                 Result::Ok(v) => v,
@@ -410,8 +466,27 @@ pub mod Zylith {
 
             let verified_nullifier: felt252 = (*_verified_inputs.at(0)).try_into().unwrap();
             let verified_root: felt252 = (*_verified_inputs.at(1)).try_into().unwrap();
-            let verified_tick_lower: i32 = (*_verified_inputs.at(2)).low.try_into().unwrap();
-            let verified_tick_upper: i32 = (*_verified_inputs.at(3)).low.try_into().unwrap();
+            // Convert u256 to i32 safely (handles two's complement for negative values)
+            let tick_lower_u256 = *_verified_inputs.at(2);
+            let verified_tick_lower: i32 = if tick_lower_u256.low >= 2147483648 { // 2^31
+                let two_to_32: u256 = 4294967296; // 2^32
+                let value_u256: u256 = tick_lower_u256.low.into();
+                let complement: u256 = two_to_32 - value_u256; // 2^32 - value
+                let neg_val: i32 = complement.low.try_into().unwrap();
+                -neg_val
+            } else {
+                tick_lower_u256.low.try_into().unwrap()
+            };
+            let tick_upper_u256 = *_verified_inputs.at(3);
+            let verified_tick_upper: i32 = if tick_upper_u256.low >= 2147483648 { // 2^31
+                let two_to_32: u256 = 4294967296; // 2^32
+                let value_u256: u256 = tick_upper_u256.low.into();
+                let complement: u256 = two_to_32 - value_u256; // 2^32 - value
+                let neg_val: i32 = complement.low.try_into().unwrap();
+                -neg_val
+            } else {
+                tick_upper_u256.low.try_into().unwrap()
+            };
             let verified_liquidity: u128 = (*_verified_inputs.at(4)).low;
             let verified_new_commitment: felt252 = (*_verified_inputs.at(5)).try_into().unwrap();
             let position_commitment: felt252 = (*_verified_inputs.at(6)).try_into().unwrap();
@@ -523,9 +598,18 @@ pub mod Zylith {
             new_commitment: felt252,
         ) -> (u128, u128) {
             // Step 1 - Verify ZK proof using Garaga LP verifier
+            // Garaga verifier expects full_proof_with_hints = [proof (8 elements) + public_inputs]
+            let mut full_proof_with_hints = proof;
+            let mut i = 0;
+            let public_inputs_len = public_inputs.len();
+            while i < public_inputs_len {
+                full_proof_with_hints.append(*public_inputs.at(i));
+                i += 1;
+            }
+            
             let lp_verifier_addr = self.lp_verifier.read();
             let verifier = ILPVerifier { contract_address: lp_verifier_addr };
-            let result = verifier.verify_groth16_proof_bn254(proof.span());
+            let result = verifier.verify_groth16_proof_bn254(full_proof_with_hints.span());
 
             let _verified_inputs = match result {
                 Result::Ok(v) => v,
@@ -555,8 +639,27 @@ pub mod Zylith {
 
             let verified_nullifier: felt252 = (*_verified_inputs.at(0)).try_into().unwrap();
             let verified_root: felt252 = (*_verified_inputs.at(1)).try_into().unwrap();
-            let verified_tick_lower: i32 = (*_verified_inputs.at(2)).low.try_into().unwrap();
-            let verified_tick_upper: i32 = (*_verified_inputs.at(3)).low.try_into().unwrap();
+            // Convert u256 to i32 safely (handles two's complement for negative values)
+            let tick_lower_u256 = *_verified_inputs.at(2);
+            let verified_tick_lower: i32 = if tick_lower_u256.low >= 2147483648 { // 2^31
+                let two_to_32: u256 = 4294967296; // 2^32
+                let value_u256: u256 = tick_lower_u256.low.into();
+                let complement: u256 = two_to_32 - value_u256; // 2^32 - value
+                let neg_val: i32 = complement.low.try_into().unwrap();
+                -neg_val
+            } else {
+                tick_lower_u256.low.try_into().unwrap()
+            };
+            let tick_upper_u256 = *_verified_inputs.at(3);
+            let verified_tick_upper: i32 = if tick_upper_u256.low >= 2147483648 { // 2^31
+                let two_to_32: u256 = 4294967296; // 2^32
+                let value_u256: u256 = tick_upper_u256.low.into();
+                let complement: u256 = two_to_32 - value_u256; // 2^32 - value
+                let neg_val: i32 = complement.low.try_into().unwrap();
+                -neg_val
+            } else {
+                tick_upper_u256.low.try_into().unwrap()
+            };
             let verified_liquidity: u128 = (*_verified_inputs.at(4)).low;
             let verified_new_commitment: felt252 = (*_verified_inputs.at(5)).try_into().unwrap();
             let position_commitment: felt252 = (*_verified_inputs.at(6)).try_into().unwrap();
@@ -1155,9 +1258,18 @@ pub mod Zylith {
             new_commitment: felt252,
         ) -> (u128, u128) {
             // Step 1 - Verify ZK proof using Garaga LP verifier
+            // Garaga verifier expects full_proof_with_hints = [proof (8 elements) + public_inputs]
+            let mut full_proof_with_hints = proof;
+            let mut i = 0;
+            let public_inputs_len = public_inputs.len();
+            while i < public_inputs_len {
+                full_proof_with_hints.append(*public_inputs.at(i));
+                i += 1;
+            }
+            
             let lp_verifier_addr = self.lp_verifier.read();
             let verifier = ILPVerifier { contract_address: lp_verifier_addr };
-            let result = verifier.verify_groth16_proof_bn254(proof.span());
+            let result = verifier.verify_groth16_proof_bn254(full_proof_with_hints.span());
 
             let _verified_inputs = match result {
                 Result::Ok(v) => v,
@@ -1186,8 +1298,27 @@ pub mod Zylith {
 
             let verified_nullifier: felt252 = (*_verified_inputs.at(0)).try_into().unwrap();
             let verified_root: felt252 = (*_verified_inputs.at(1)).try_into().unwrap();
-            let verified_tick_lower: i32 = (*_verified_inputs.at(2)).low.try_into().unwrap();
-            let verified_tick_upper: i32 = (*_verified_inputs.at(3)).low.try_into().unwrap();
+            // Convert u256 to i32 safely (handles two's complement for negative values)
+            let tick_lower_u256 = *_verified_inputs.at(2);
+            let verified_tick_lower: i32 = if tick_lower_u256.low >= 2147483648 { // 2^31
+                let two_to_32: u256 = 4294967296; // 2^32
+                let value_u256: u256 = tick_lower_u256.low.into();
+                let complement: u256 = two_to_32 - value_u256; // 2^32 - value
+                let neg_val: i32 = complement.low.try_into().unwrap();
+                -neg_val
+            } else {
+                tick_lower_u256.low.try_into().unwrap()
+            };
+            let tick_upper_u256 = *_verified_inputs.at(3);
+            let verified_tick_upper: i32 = if tick_upper_u256.low >= 2147483648 { // 2^31
+                let two_to_32: u256 = 4294967296; // 2^32
+                let value_u256: u256 = tick_upper_u256.low.into();
+                let complement: u256 = two_to_32 - value_u256; // 2^32 - value
+                let neg_val: i32 = complement.low.try_into().unwrap();
+                -neg_val
+            } else {
+                tick_upper_u256.low.try_into().unwrap()
+            };
             let verified_new_commitment: felt252 = (*_verified_inputs.at(4)).try_into().unwrap();
             let position_commitment: felt252 = (*_verified_inputs.at(5)).try_into().unwrap();
 

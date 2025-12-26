@@ -1,7 +1,7 @@
 use starknet::core::types::FieldElement;
 use std::str::FromStr;
 use num_bigint::BigUint;
-use num_traits::{ToPrimitive, Num};
+use num_traits::Num;
 
 /// Build calldata for ERC20 approve
 pub fn build_approve_calldata(spender: &str, amount_low: u128, amount_high: u128) -> Result<Vec<FieldElement>, String> {
@@ -287,10 +287,10 @@ fn parse_felt(value_str: &str) -> Result<FieldElement, String> {
         value_big.clone()
     };
     
-    // Convert to u128 (should always fit after modulo)
-    let modulo_u128 = modulo_big.to_u128()
-        .ok_or_else(|| format!("Modulo result too large for u128 (this should not happen)"))?;
-    
-    Ok(FieldElement::from(modulo_u128))
+    // Convert BigUint to string and parse as FieldElement
+    // FieldElement can handle the full felt252 range directly
+    let modulo_str = modulo_big.to_str_radix(10);
+    FieldElement::from_str(&modulo_str)
+        .map_err(|e| format!("Failed to convert to FieldElement: {}", e))
 }
 
