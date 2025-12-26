@@ -1,4 +1,7 @@
 use starknet::core::types::FieldElement;
+use std::str::FromStr;
+use num_bigint::BigUint;
+use num_traits::{ToPrimitive, Num};
 
 /// Build calldata for ERC20 approve
 pub fn build_approve_calldata(spender: &str, amount_low: u128, amount_high: u128) -> Result<Vec<FieldElement>, String> {
@@ -257,9 +260,37 @@ pub fn build_initialize_calldata(
     ])
 }
 
-/// Parse felt252 from hex string
-fn parse_felt(hex_str: &str) -> Result<FieldElement, String> {
-    FieldElement::from_hex_be(hex_str)
-        .map_err(|e| format!("Failed to parse felt252 '{}': {}", hex_str, e))
+/// Parse felt252 from hex string or decimal string
+/// Handles values that may exceed felt252 by applying modulo arithmetic
+fn parse_felt(value_str: &str) -> Result<FieldElement, String> {
+    // STARKNET_FELT_MAX = 2^251 + 17 * 2^192 + 1
+    // This value exceeds u128, so we use BigUint for calculations
+    let felt_max_str = "3618502788666131106986593281521497120414687020801267626233049500247285301248";
+    let felt_max_big = BigUint::from_str(felt_max_str)
+        .map_err(|_| "Failed to parse FELT_MAX constant".to_string())?;
+    
+    // Parse value as BigUint (handles both hex and decimal)
+    let value_big = if value_str.starts_with("0x") {
+        // Parse hex string - remove "0x" prefix and parse as base 16
+        num_bigint::BigUint::from_str_radix(&value_str[2..], 16)
+            .map_err(|e| format!("Failed to parse hex value '{}': {}", value_str, e))?
+    } else {
+        // Parse decimal string
+        BigUint::from_str(value_str)
+            .map_err(|e| format!("Failed to parse decimal value '{}': {}", value_str, e))?
+    };
+    
+    // Apply felt252 modulo if value exceeds limit
+    let modulo_big = if value_big >= felt_max_big {
+        &value_big % &felt_max_big
+    } else {
+        value_big.clone()
+    };
+    
+    // Convert to u128 (should always fit after modulo)
+    let modulo_u128 = modulo_big.to_u128()
+        .ok_or_else(|| format!("Modulo result too large for u128 (this should not happen)"))?;
+    
+    Ok(FieldElement::from(modulo_u128))
 }
 

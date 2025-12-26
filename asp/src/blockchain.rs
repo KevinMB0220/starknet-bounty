@@ -352,6 +352,90 @@ impl BlockchainClient {
             storage_address1, storage_address2
         ))
     }
+
+    /// Search for a specific commitment in Deposit events
+    /// Returns the leaf_index if found
+    /// This is much faster than waiting for full sync when looking for a specific commitment
+    pub async fn find_commitment_in_events(&self, commitment: &str) -> Result<Option<u32>, String> {
+        use starknet::core::types::EventFilter;
+        use num_bigint::BigUint;
+        
+        let commitment_felt = parse_felt(commitment)?;
+        let commitment_bigint = BigUint::from_bytes_be(&commitment_felt.to_bytes_be());
+        
+        // Deposit event selector (same as in syncer.rs)
+        let deposit_selector = FieldElement::from_hex_be("0x9149d2123147c5f43d258257fef0b7b969db78269369ebcf5ebb9eef8592f2")
+            .map_err(|e| format!("Failed to parse deposit selector: {}", e))?;
+        
+        // Always search from contract deployment block to ensure we find all deposits
+        // This is critical - even if syncer missed events, we can still find them here
+        let from_block = 4438440u64;
+        let latest_block = self.provider.block_number().await
+            .map_err(|e| format!("Failed to get latest block: {}", e))?;
+        
+        // Filter for all events from our contract
+        // We can't filter by commitment in keys, so we'll search through all Deposit events
+        let filter = EventFilter {
+            from_block: Some(BlockId::Number(from_block)),
+            to_block: Some(BlockId::Number(latest_block)),
+            address: Some(self.zylith_address),
+            keys: None, // We'll check all events and filter by Deposit selector + commitment
+        };
+        
+        let chunk_size = 1000;
+        let mut continuation_token = None;
+        let mut events_searched = 0u32;
+        let mut deposit_events_found = 0u32;
+        
+        println!("[ASP] 🔍 Searching events from block {} to {}", from_block, latest_block);
+        
+        loop {
+            let events_page = self.provider
+                .get_events(filter.clone(), continuation_token.clone(), chunk_size)
+                .await
+                .map_err(|e| format!("Failed to get events: {}", e))?;
+            
+            for event in events_page.events {
+                events_searched += 1;
+                
+                // Check if this is a Deposit event (for nested events, selector can be in any key)
+                let is_deposit = !event.keys.is_empty() && 
+                    event.keys.iter().any(|key| *key == deposit_selector);
+                
+                if is_deposit && event.data.len() >= 3 {
+                    deposit_events_found += 1;
+                    // Parse commitment from data[0]
+                    let event_commitment_felt = event.data[0];
+                    let event_commitment_bigint = BigUint::from_bytes_be(&event_commitment_felt.to_bytes_be());
+                    
+                    // Skip logging commitment details
+                    
+                    if event_commitment_bigint == commitment_bigint {
+                        // Found it! Extract leaf_index from data[1]
+                        let leaf_index_felt = event.data[1];
+                        let leaf_index: u32 = {
+                            let bytes = leaf_index_felt.to_bytes_be();
+                            let mut arr = [0u8; 4];
+                            let start = bytes.len().saturating_sub(4);
+                            arr.copy_from_slice(&bytes[start..]);
+                            u32::from_be_bytes(arr)
+                        };
+                        
+                        println!("[ASP] ✅ Found commitment in events at index {} (searched {} events, {} deposit events)", leaf_index, events_searched, deposit_events_found);
+                        return Ok(Some(leaf_index));
+                    }
+                }
+            }
+            
+            continuation_token = events_page.continuation_token;
+            if continuation_token.is_none() {
+                break;
+            }
+        }
+        
+        println!("[ASP] ⚠️  Commitment not found after searching {} events ({} deposit events found)", events_searched, deposit_events_found);
+        Ok(None)
+    }
 }
 
 /// Get function selector from function name

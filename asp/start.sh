@@ -41,6 +41,15 @@ echo "  PORT: $PORT"
 echo "  BUILD_MODE: $BUILD_MODE"
 echo ""
 
+# Check if port is in use and kill the process
+if lsof -ti:$PORT > /dev/null 2>&1; then
+    echo -e "${YELLOW}⚠️  Port $PORT is already in use. Killing existing process...${NC}"
+    lsof -ti:$PORT | xargs kill -9 2>/dev/null || true
+    sleep 1
+    echo -e "${GREEN}✓ Port $PORT freed${NC}"
+    echo ""
+fi
+
 # Determinar binario y flags de compilación
 if [ "$BUILD_MODE" = "dev" ]; then
     BINARY="target/debug/zylith-asp"

@@ -62,10 +62,20 @@ impl MerkleTree {
         }
     }
 
-    /// Insert a leaf and update the tree, returning the new root
+    /// Insert a leaf at the next available index and update the tree, returning the new root
     pub fn insert(&mut self, leaf: BigUint) -> BigUint {
         let index = self.next_index;
         self.next_index += 1;
+        self.insert_at_index(index, leaf)
+    }
+
+    /// Insert a leaf at a specific index and update the tree, returning the new root
+    /// This is used when syncing events that may have gaps
+    pub fn insert_at_index(&mut self, index: u32, leaf: BigUint) -> BigUint {
+        // Update next_index if we're inserting beyond it
+        if index >= self.next_index {
+            self.next_index = index + 1;
+        }
 
         // Store leaf at level 0
         self.nodes.insert((0, index), leaf.clone());
@@ -158,6 +168,20 @@ impl MerkleTree {
     /// Get number of leaves inserted
     pub fn get_leaf_count(&self) -> u32 {
         self.next_index
+    }
+
+    /// Find the index of a commitment in the tree
+    /// Returns None if the commitment is not found
+    pub fn find_commitment_index(&self, commitment: &BigUint) -> Option<u32> {
+        // Search through all leaves (level 0)
+        for index in 0..self.next_index {
+            if let Some(leaf) = self.nodes.get(&(0, index)) {
+                if leaf == commitment {
+                    return Some(index);
+                }
+            }
+        }
+        None
     }
 
     /// Hash two nodes using Poseidon BN254 and mask to felt252

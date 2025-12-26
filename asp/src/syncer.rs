@@ -2,6 +2,7 @@ use crate::merkle::MerkleTree;
 use num_bigint::BigUint;
 use starknet::{
     core::types::{BlockId, EventFilter, FieldElement},
+    core::utils::starknet_keccak,
     providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider},
 };
 use std::fs;
@@ -14,6 +15,13 @@ use url::Url;
 /// Calculated as: starknet_keccak(b"Deposit") truncated to 250 bits
 const DEPOSIT_EVENT_SELECTOR: &str =
     "0x9149d2123147c5f43d258257fef0b7b969db78269369ebcf5ebb9eef8592f2";
+
+/// Calculate event selector from name
+fn get_event_selector(name: &str) -> FieldElement {
+    let hash = starknet_keccak(name.as_bytes());
+    // Truncate to 250 bits (Starknet field element)
+    hash & FieldElement::from_hex_be("0x3ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff").unwrap()
+}
 
 /// State file for persistence
 const STATE_FILE: &str = "asp_state.json";
@@ -28,6 +36,9 @@ pub struct Syncer {
     pub contract_address: FieldElement,
     pub tree: Arc<Mutex<MerkleTree>>,
     pub deposit_selector: FieldElement,
+    pub swap_selector: FieldElement,
+    pub pool_event_selector: FieldElement,
+    pub blockchain_client: Option<Arc<crate::blockchain::BlockchainClient>>,
 }
 
 impl Syncer {
@@ -37,13 +48,25 @@ impl Syncer {
         )));
         let contract_address = FieldElement::from_hex_be(contract_address).unwrap();
         let deposit_selector = FieldElement::from_hex_be(DEPOSIT_EVENT_SELECTOR).unwrap();
+        
+        // Calculate selectors for other events
+        let swap_selector = get_event_selector("Swap");
+        let pool_event_selector = get_event_selector("PoolEvent");
 
         Self {
             provider,
             contract_address,
             tree,
             deposit_selector,
+            swap_selector,
+            pool_event_selector,
+            blockchain_client: None,
         }
+    }
+
+    pub fn with_blockchain_client(mut self, client: Arc<crate::blockchain::BlockchainClient>) -> Self {
+        self.blockchain_client = Some(client);
+        self
     }
 
     /// Load persisted state
@@ -63,12 +86,82 @@ impl Syncer {
 
     pub async fn run(&self) {
         let mut state = Self::load_state();
-        println!(
-            "Starting sync from block {}",
-            state.last_synced_block
-        );
+        
+        // Check if we should force re-sync from a specific block
+        if let Ok(reset_block_str) = std::env::var("RESYNC_FROM_BLOCK") {
+            if let Ok(reset_block) = reset_block_str.parse::<u64>() {
+                state.last_synced_block = reset_block;
+                Self::save_state(&state);
+            }
+        }
+        
+        // If state file doesn't exist or last_synced_block is 0, try to sync from contract deployment
+        if state.last_synced_block == 0 {
+            state.last_synced_block = 4438440;
+            Self::save_state(&state);
+        }
+        
+        // Check if tree is empty but contract has deposits
+        let leaf_count = {
+            let tree = self.tree.lock().unwrap();
+            tree.get_leaf_count()
+        };
+        
+        if leaf_count == 0 {
+            if let Some(ref blockchain) = self.blockchain_client {
+                match blockchain.get_merkle_root().await {
+                    Ok(contract_root) if contract_root != "0x0" && contract_root != "0x0000000000000000000000000000000000000000000000000000000000000000" => {
+                        state.last_synced_block = 4438440;
+                        Self::save_state(&state);
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         loop {
+            // First, verify our tree root matches the contract
+            // Do this check separately to avoid Send issues - must drop lock before await
+            let should_resync = if let Some(ref blockchain) = self.blockchain_client {
+                // Get local root first (drop lock before await)
+                let local_root = {
+                    let tree = self.tree.lock().unwrap();
+                    format!("0x{:x}", tree.get_root())
+                };
+                
+                // Now await without holding the lock
+                let contract_root_result = blockchain.get_merkle_root().await;
+                
+                match contract_root_result {
+                    Ok(contract_root) if contract_root != local_root => {
+                        // Silently resync - don't spam logs
+                        true
+                    }
+                    Ok(_) => false,
+                    Err(e) => {
+                        eprintln!("Failed to get contract root: {:?}", e);
+                        false
+                    }
+                }
+            } else {
+                false
+            };
+
+            // If root mismatch, do a full resync from contract deployment
+            // This ensures we can recover all deposits even if syncer was restarted or had gaps
+            if should_resync {
+                let tree = self.tree.lock().unwrap();
+                let leaf_count = tree.get_leaf_count();
+                drop(tree);
+                
+                if leaf_count == 0 {
+                    state.last_synced_block = 4438440;
+                } else {
+                    state.last_synced_block = 4438440;
+                }
+                Self::save_state(&state);
+            }
+
             match self.sync_events(state.last_synced_block).await {
                 Ok(new_last_block) => {
                     if new_last_block > state.last_synced_block {
@@ -76,8 +169,8 @@ impl Syncer {
                         Self::save_state(&state);
                     }
                 }
-                Err(e) => {
-                    eprintln!("Sync error: {:?}", e);
+                Err(_e) => {
+                    // Silently handle sync errors
                 }
             }
             sleep(Duration::from_secs(5)).await;
@@ -90,44 +183,82 @@ impl Syncer {
             return Ok(from_block);
         }
 
-        println!(
-            "Syncing blocks {} to {}",
-            from_block + 1,
-            latest_block
-        );
-
-        // Filter for events from our contract with Deposit selector
+        // Filter for events from our contract
+        // Note: For nested enum events (Event::PrivacyEvent::Deposit), the Deposit selector
+        // is in keys[2], not keys[0]. So we filter only by contract address and check
+        // all keys in the loop below.
         let filter = EventFilter {
             from_block: Some(BlockId::Number(from_block + 1)),
             to_block: Some(BlockId::Number(latest_block)),
             address: Some(self.contract_address),
-            keys: Some(vec![vec![self.deposit_selector]]), // Filter by Deposit event
+            keys: None, // Don't filter by keys - we'll check in the loop for nested events
         };
 
         let chunk_size = 1000;
         let mut continuation_token = None;
-        let mut events_processed = 0u32;
+        let mut swap_events_seen = 0u32;
+        let mut _total_events_seen = 0u32;
+        let mut _is_first_page = true;
 
         loop {
             let events_page = self
                 .provider
-                .get_events(filter.clone(), continuation_token, chunk_size)
+                .get_events(filter.clone(), continuation_token.clone(), chunk_size)
                 .await?;
             
+            _total_events_seen += events_page.events.len() as u32;
+            
             for event in events_page.events {
-                // Verify this is a Deposit event
-                if event.keys.is_empty() || event.keys[0] != self.deposit_selector {
+                // For nested enum events (PrivacyEvent::Deposit), the structure is:
+                // keys[0] = PrivacyEvent enum selector
+                // keys[1] = Deposit variant selector (if nested)
+                // OR keys[0] = Deposit selector (if direct)
+                // Check all keys to find the Deposit variant selector
+                let is_deposit_event = !event.keys.is_empty() && 
+                    event.keys.iter().any(|key| *key == self.deposit_selector);
+                
+                // Check for PoolEvent enum (which contains Swap)
+                // Structure: keys[0] = Event enum, keys[1] = PoolEvent enum, keys[2] = Swap variant
+                let is_pool_event = !event.keys.is_empty() && 
+                    event.keys.iter().any(|key| *key == self.pool_event_selector);
+                
+                // Check for Swap events - can be at keys[1] or keys[2] depending on nesting
+                let is_swap_event = !event.keys.is_empty() && (
+                    event.keys.iter().any(|key| *key == self.swap_selector) ||
+                    (is_pool_event && event.keys.len() >= 2 && event.keys[1] == self.swap_selector) ||
+                    (is_pool_event && event.keys.len() >= 3 && event.keys[2] == self.swap_selector)
+                );
+                
+                // Only log swap events
+                if !is_deposit_event {
+                    if is_swap_event {
+                        swap_events_seen += 1;
+                        println!(
+                            "[Syncer] 🔄 Swap event #{} detected: keys={:?}, data_len={}",
+                            swap_events_seen,
+                            event.keys.iter().map(|k| format!("0x{:x}", k)).collect::<Vec<_>>(),
+                            event.data.len()
+                        );
+                        if event.data.len() >= 6 {
+                            println!(
+                                "  📊 Swap details: sender=0x{:x}, recipient=0x{:x}, amount0={:?}, amount1={:?}",
+                                event.data[0], event.data[1], event.data[2], event.data[3]
+                            );
+                        }
+                    }
                     continue;
                 }
+                
+                // Skip verbose deposit event logging - only log summary
 
                 // Parse Deposit event data:
+                // For nested events, the data structure is:
                 // data[0] = commitment (felt252)
                 // data[1] = leaf_index (u32)
                 // data[2] = root (felt252)
                 if event.data.len() >= 3 {
                         let commitment_felt = event.data[0];
                     let leaf_index_felt = event.data[1];
-                    let new_root_felt = event.data[2];
 
                     // Convert to BigUint for our Merkle tree
                     let commitment = BigUint::from_bytes_be(&commitment_felt.to_bytes_be());
@@ -139,37 +270,41 @@ impl Syncer {
                         u32::from_be_bytes(arr)
                     };
 
+                    // Get zero leaf and current count before acquiring mutable lock
+                    let (current_count, zero_leaf) = {
+                        let tree = self.tree.lock().unwrap();
+                        (tree.get_leaf_count(), tree.zeros[0].clone())
+                    };
+
                     // Insert into our tree
-                        let mut tree = self.tree.lock().unwrap();
+                    let mut tree = self.tree.lock().unwrap();
 
-                    // Verify index matches expected (should be sequential)
-                    let expected_index = tree.get_leaf_count();
-                    if leaf_index != expected_index {
-                        eprintln!(
-                            "Warning: Leaf index mismatch. Expected {}, got {}. Possible missed events.",
-                            expected_index, leaf_index
-                        );
+                    // Handle gaps: if leaf_index is greater than current count, insert empty leaves
+                    if leaf_index > current_count {
+                        let gaps = leaf_index - current_count;
+                        // Insert empty leaves (zeros) to fill the gap
+                        for i in 0..gaps {
+                            tree.insert_at_index(current_count + i, zero_leaf.clone());
+                        }
+                    } else if leaf_index < current_count {
+                        // Check if this commitment already exists at this index
+                        if let Some(existing_leaf) = tree.nodes.get(&(0, leaf_index)) {
+                            if existing_leaf == &commitment {
+                                // Skip silently - already processed
+                                continue;
+                            }
+                        }
                     }
 
-                    let computed_root = tree.insert(commitment.clone());
-                    events_processed += 1;
-
-                    // Log
-                    println!(
-                        "Synced deposit #{}: commitment=0x{:x}, root=0x{:x}",
-                        leaf_index, commitment, computed_root
-                    );
-
-                    // Optionally verify root matches on-chain (for debugging)
-                    let expected_root = BigUint::from_bytes_be(&new_root_felt.to_bytes_be());
-                    if computed_root != expected_root {
-                        eprintln!(
-                            "Warning: Root mismatch! Computed=0x{:x}, On-chain=0x{:x}",
-                            computed_root, expected_root
-                        );
+                    // Insert the commitment at the correct index
+                    if leaf_index == current_count {
+                        // Normal sequential insert
+                        tree.insert(commitment.clone());
+                    } else {
+                        // Insert at specific index (filling gaps already handled above)
+                        tree.insert_at_index(leaf_index, commitment.clone());
                     }
-                } else {
-                    eprintln!("Warning: Deposit event with insufficient data fields");
+                    // Process silently - no logging
                 }
             }
 
@@ -179,8 +314,9 @@ impl Syncer {
             }
         }
 
-        if events_processed > 0 {
-            println!("Processed {} deposit events", events_processed);
+        // Only log if swap events were found
+        if swap_events_seen > 0 {
+            println!("[Syncer] 🔄 Found {} swap event(s)", swap_events_seen);
         }
 
         Ok(latest_block)

@@ -32,7 +32,7 @@ pub fn generate_commitment(secret: &str, nullifier: &str, amount: u128) -> Resul
     let result = poseidon2.hash(&[intermediate, amount_fr])
         .map_err(|e| format!("Failed to hash: {:?}", e))?;
 
-    // Convert to BigUint and apply mask
+    // Convert to BigUint and apply mask (matches Cairo contract)
     let result_big = biguint_from_fr(&result);
     let safe_val = result_big & mask;
 
