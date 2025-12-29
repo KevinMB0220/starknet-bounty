@@ -16,13 +16,13 @@
 
 | Field          | Value                                                                |
 | -------------- | -------------------------------------------------------------------- |
-| **Class Hash** | `0x4bb0d80090bb558d1b6bf5562992ee7f4daf3f8d077bcad1bc87c413fa19ed0`  |
+| **Class Hash** | `0x5d8aa79ef45cbd051fc26f9e7ea3df89ce6b1a18a641b92a755c9f788e7242d`  |
 | **Contract**   | `0x04be88b8ded4bcb9bef0d7afce05c8eff7df67714a2e6a9371ed1151948a3dc3` |
 | **Owner**      | `0x066EE9d5F6791270d7cD1314ddB9fc8f7EdCb59E2847e2b13D57A06e7c988D63` |
 
 🔗 **Links**
 
-- Class → https://sepolia.starkscan.co/class/0x4bb0d80090bb558d1b6bf5562992ee7f4daf3f8d077bcad1bc87c413fa19ed0
+- Class → https://sepolia.starkscan.co/class/0x5d8aa79ef45cbd051fc26f9e7ea3df89ce6b1a18a641b92a755c9f788e7242d
 - Contract → https://sepolia.starkscan.co/contract/0x04be88b8ded4bcb9bef0d7afce05c8eff7df67714a2e6a9371ed1151948a3dc3
 
 ---
