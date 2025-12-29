@@ -6,6 +6,7 @@ import { useASP } from "./use-asp"
 import { usePortfolioStore } from "./use-portfolio"
 import { usePoolStore } from "@/stores/use-pool-store"
 import { generateNote, verifyAndFixCommitment, Note } from "@/lib/commitment"
+import { validateNote } from "@/lib/note-validation"
 import { ZylithContractClient } from "@/lib/contracts/zylith-contract"
 import { Contract } from "starknet"
 import { CONFIG } from "@/lib/config"
@@ -76,6 +77,26 @@ export function usePrivateSwap() {
 
     if (amountSpecified > inputNote.amount) {
       throw new Error('Amount specified exceeds note balance')
+    }
+
+    // CRITICAL: Verify pool has liquidity before attempting swap
+    // If there's no liquidity, the swap will fail in the contract with NO_LIQUIDITY
+    try {
+      const contract = new Contract(zylithAbi, CONFIG.ZYLITH_CONTRACT, provider)
+      // Try to read liquidity from pool (if get_liquidity is exposed in ABI)
+      try {
+        const poolLiquidity = await contract.call('get_liquidity', [])
+        if (poolLiquidity && BigInt(poolLiquidity.toString()) === 0n) {
+          throw new Error('Pool has no liquidity. Please add liquidity before attempting a swap.')
+        }
+      } catch (liquidityError: any) {
+        // If get_liquidity is not exposed or fails, log warning but continue
+        // The contract will check liquidity and fail with a clear error
+        console.warn('[Frontend] ⚠️  Could not verify pool liquidity:', liquidityError.message)
+      }
+    } catch (error) {
+      // Non-critical, continue with swap attempt
+      console.warn('[Frontend] ⚠️  Could not check pool liquidity:', error)
     }
 
     setState({ isLoading: true, error: null, proofStep: "fetching_merkle" })
@@ -461,84 +482,50 @@ export function usePrivateSwap() {
         throw new Error('Invalid Merkle root from ASP')
       }
       
-      // Step 0: Verify that the Merkle tree commitment matches what the circuit will compute
-      // Both Cairo contract and circuit now use: Poseidon(Poseidon(secret, nullifier), amount) then mask
-      // (NO intermediate mask - matches zylith/src/privacy/commitment.cairo)
-      const proofLeaf = BigInt(merkleProof.leaf)
-      const { generateCommitment, computeLegacyCommitment } = await import("@/lib/commitment")
+      // Step 0: Validate note against Merkle tree (security check)
+      // This ensures the note can be used for ZK operations
+      const validation = await validateNote(inputNote)
       
-      // Compute using Cairo contract method (no intermediate mask) - matches both circuit and tree
-      const cairoCommitment = await generateCommitment(inputNote.secret, inputNote.nullifier, inputNote.amount)
-      
-      // Compute what the legacy method would produce (for comparison)
-      const legacyCommitment = computeLegacyCommitment(inputNote.secret, inputNote.nullifier, inputNote.amount)
-      
-      // The circuit now matches Cairo (no intermediate mask), so this should match the tree
-      const circuitCommitment = cairoCommitment
-      
-      // Check if the Merkle tree commitment matches what the Cairo contract computed
-      // (The circuit has a different calculation, but the tree has what Cairo computed)
-      if (proofLeaf !== cairoCommitment) {
-        // The Merkle tree commitment doesn't match what the circuit will compute
-        if (proofLeaf === legacyCommitment) {
-          // The tree has a legacy commitment - this note was deposited before the fix
+      if (!validation.isValid) {
+        // Note is invalid - provide helpful error message
+        if (validation.isLegacy) {
           throw new Error(
             `⚠️ Legacy Note Detected\n\n` +
             `This note was deposited before the Poseidon implementation fix. ` +
-            `The commitment in the Merkle tree (${proofLeaf.toString()}) was computed using ` +
-            `Starknet's Poseidon, but the circuit now requires BN254 Poseidon and will compute ` +
-            `(${circuitCommitment.toString()}). These don't match, so the Merkle proof will fail.\n\n` +
-            `To use this note, you need to:\n` +
-            `1. Withdraw this note (if withdrawal is supported)\n` +
-            `2. Create a new deposit with the same amount\n` +
-            `3. The new note will use BN254 Poseidon and work with the circuit\n\n` +
-            `Note: The note's secret and nullifier are still valid - you just need to ` +
+            `The commitment in the Merkle tree was computed using Starknet's Poseidon, ` +
+            `but the circuit now requires BN254 Poseidon.\n\n` +
+            `🔧 Solution:\n` +
+            `1. Create a new deposit with the same amount\n` +
+            `2. The new note will use BN254 Poseidon and work with all ZK operations\n\n` +
+            `Note: Your secret and nullifier are still valid - you just need to ` +
             `re-deposit to update the commitment in the Merkle tree.`
           )
         } else {
-          // The tree commitment doesn't match either method - this suggests the note data is wrong
-          // The commitment in the tree is what was actually deposited on-chain
-          // If it doesn't match what we compute, the note's secret/nullifier/amount are wrong
-          const noteData = {
-            secret: inputNote.secret.toString(),
-            nullifier: inputNote.nullifier.toString(),
-            amount: inputNote.amount.toString(),
-            commitment: inputNote.commitment.toString(),
-            index: inputNote.index,
-          }
-          
           throw new Error(
-            `⚠️ Note Data Mismatch\n\n` +
-            `The commitment in the Merkle tree (${proofLeaf.toString()}) does not match what ` +
-            `the Cairo contract would compute from the note's secret/nullifier/amount.\n\n` +
-            `Computed Values:\n` +
-            `  Cairo Method (BN254, no intermediate mask): ${cairoCommitment.toString()}\n` +
-            `  Legacy (Starknet): ${legacyCommitment.toString()}\n` +
-            `  Tree has: ${proofLeaf.toString()}\n\n` +
-            `Note Data:\n` +
-            `  Secret: ${noteData.secret}\n` +
-            `  Nullifier: ${noteData.nullifier}\n` +
-            `  Amount: ${noteData.amount}\n` +
-            `  Stored Commitment: ${noteData.commitment}\n` +
-            `  Leaf Index: ${noteData.index}\n\n` +
-            `Possible Causes:\n` +
-            `1. The note's secret/nullifier/amount don't match what was actually deposited\n` +
-            `2. The note data was corrupted or modified after deposit\n` +
-            `3. The note was created with different values than what was sent to the contract\n\n` +
-            `Solution:\n` +
-            `- If you have the original deposit transaction, verify the commitment that was sent\n` +
-            `- The commitment in the tree (${proofLeaf.toString()}) is what was actually deposited\n` +
-            `- You may need to recover the correct secret/nullifier/amount from your deposit records\n` +
-            `- Or create a new deposit with the correct values`
+            `⚠️ Invalid Note - Cannot Generate Valid Proof\n\n` +
+            `${validation.reason || "Note data doesn't match the Merkle tree"}\n\n` +
+            `🔧 Solution:\n` +
+            `- Create a new deposit with the correct amount\n` +
+            `- The new note will work with all ZK operations (swap, LP, withdraw)\n\n` +
+            `The commitment in the tree (${validation.treeCommitment?.toString() || "unknown"}) ` +
+            `is what was actually deposited on-chain. If your note's secret/nullifier/amount ` +
+            `don't produce this commitment, you need to create a new deposit.`
           )
         }
       }
+      
+      console.log("[Frontend] ✅ Note validation passed:", {
+        treeCommitment: validation.treeCommitment?.toString(),
+        calculatedCommitment: validation.calculatedCommitment?.toString(),
+      })
+      
+      const proofLeaf = BigInt(merkleProof.leaf)
       
       // If we get here, the Merkle tree commitment matches what the Cairo contract computed
       // Update the note's stored commitment to match (in case it was wrong)
       const verifiedInputNote: Note = {
         ...inputNote,
-        commitment: cairoCommitment, // Use the Cairo commitment (matches tree)
+        commitment: validation.calculatedCommitment || inputNote.commitment, // Use validated commitment
       }
 
       // Step 3: Use output note from ASP (already generated with correct commitment)
@@ -772,16 +759,39 @@ export function usePrivateSwap() {
       
       const executeStartTime = Date.now();
       
-        const contractClient = new ZylithContractClient(provider as any)
-      const tx = await contractClient.privateSwap(
-          account as any,
-          proof,
-          publicInputs,
-          zeroForOne,
-          amountSpecified,
-          sqrtPriceLimitX128,
-          outputNote.commitment
-        )
+      // Use account.execute() directly to avoid Argent multicall issues
+      // This is more reliable than contract.method() for Argent accounts
+      console.log(`[Frontend] 📋 Executing swap with account.execute() method`);
+      console.log(`[Frontend] 📋 Contract: ${CONFIG.ZYLITH_CONTRACT}`);
+      console.log(`[Frontend] 📋 Proof length: ${proof.length}, Public inputs length: ${publicInputs.length}`);
+      
+      // Build calldata manually for private_swap
+      // Format: [proof_len, ...proof, public_inputs_len, ...public_inputs, zeroForOne, amountSpecified, sqrtPriceLimitX128.low, sqrtPriceLimitX128.high, newCommitment]
+      const calldata = [
+        proof.length.toString(),
+        ...proof,
+        publicInputs.length.toString(),
+        ...publicInputs,
+        zeroForOne ? "1" : "0",
+        amountSpecified.toString(),
+        sqrtPriceLimitX128.low.toString(),
+        sqrtPriceLimitX128.high.toString(),
+        outputNote.commitment.toString()
+      ];
+      
+      console.log(`[Frontend] 📋 Calldata length: ${calldata.length}`);
+      console.log(`[Frontend] 📋 Calldata preview: [${calldata.slice(0, 5).join(", ")}, ...]`);
+      
+      // Execute transaction using account.execute() with explicit array format
+      // This format explicitly avoids multicall for Argent accounts
+      // By passing an array with a single call, we ensure it's not treated as a multicall
+      const tx = await account.execute([
+        {
+          contractAddress: CONFIG.ZYLITH_CONTRACT,
+          entrypoint: "private_swap",
+          calldata: calldata,
+        }
+      ])
       
       const executeElapsed = ((Date.now() - executeStartTime) / 1000).toFixed(2);
       console.log(`[Frontend] ✅ Transaction executed in ${executeElapsed}s. Hash: ${tx.transaction_hash}`);

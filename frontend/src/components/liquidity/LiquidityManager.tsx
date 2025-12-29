@@ -26,7 +26,6 @@ export function LiquidityManager() {
   const [amount, setAmount] = useState("")
   const [tickLower, setTickLower] = useState(-1000)
   const [tickUpper, setTickUpper] = useState(1000)
-  const [selectedNoteIndex, setSelectedNoteIndex] = useState<number | null>(null)
   const [liquidityAmount, setLiquidityAmount] = useState("")
   const [selectedPositionId, setSelectedPositionId] = useState<string | null>(null)
   const [successTxHash, setSuccessTxHash] = useState<string | null>(null)
@@ -38,6 +37,7 @@ export function LiquidityManager() {
   const { positions: storePositions } = useLPPositionStore()
   
   // Get available notes (for mint operations)
+  // Filter out notes without index - they will be validated when used
   const availableNotes = notes.filter(n => n.index !== undefined)
 
   // Get latest successful transaction
@@ -76,16 +76,61 @@ export function LiquidityManager() {
     }
   })
 
-  const selectedNote = selectedNoteIndex !== null 
-    ? availableNotes[selectedNoteIndex] 
-    : availableNotes[0]
+  // Note selection is automatic - use first available note if any
+  const firstAvailableNote = availableNotes.length > 0 ? availableNotes[0] : undefined
 
-  const amountBigInt = amount ? toBigInt(amount) * BigInt(10 ** 18) : 0n
+  // Calculate amount in smallest unit (assuming 18 decimals)
+  // Handle decimal numbers correctly: "0.001" * 10^18 = 1000000000000000
+  const decimals = 18; // Assuming 18 decimals for all tokens
+  const amountBigInt = amount
+    ? (() => {
+        const trimmed = amount.trim();
+        if (
+          !trimmed ||
+          trimmed === "0" ||
+          trimmed === "0.0" ||
+          trimmed === "0.00"
+        ) {
+          return 0n;
+        }
+
+        // Parse as float to handle decimals
+        const floatValue = parseFloat(trimmed);
+        if (isNaN(floatValue) || floatValue <= 0) {
+          return 0n;
+        }
+
+        // Multiply by 10^decimals to get smallest unit, then convert to BigInt
+        // Use string manipulation to avoid precision loss
+        const parts = trimmed.split(".");
+        if (parts.length === 1) {
+          // Integer: "1" -> 1 * 10^18
+          return BigInt(trimmed) * BigInt(10 ** decimals);
+        } else {
+          // Decimal: "0.001" -> "001" -> 1 * 10^15 (18-3)
+          const integerPart = parts[0] || "0";
+          const decimalPart = parts[1] || "";
+          const decimalPlaces = decimalPart.length;
+
+          // Pad or truncate decimal part to match token decimals
+          let adjustedDecimal = decimalPart;
+          if (decimalPlaces < decimals) {
+            adjustedDecimal = decimalPart.padEnd(decimals, "0");
+          } else if (decimalPlaces > decimals) {
+            adjustedDecimal = decimalPart.substring(0, decimals);
+          }
+
+          // Combine: integerPart + adjustedDecimal = total in smallest units
+          const totalString = integerPart + adjustedDecimal;
+          return BigInt(totalString);
+        }
+      })()
+    : 0n;
   const liquidityBigInt = liquidityAmount ? toBigInt(liquidityAmount) : 0n
 
   const executeMintLiquidity = async () => {
-    if (!selectedNote) {
-      alert("Please select a note or deposit tokens first")
+    if (availableNotes.length === 0) {
+      alert("No notes available. Please deposit tokens first")
       return
     }
 
@@ -99,33 +144,27 @@ export function LiquidityManager() {
       return
     }
 
-    if (selectedNote.amount < amountBigInt) {
-      alert(`Insufficient balance. Available: ${selectedNote.amount.toString()}`)
-      return
-    }
-
     try {
       // TODO: Calculate actual liquidity amount from amount and tick range
       // For now, using amount as liquidity (simplified)
       const calculatedLiquidity = amountBigInt
       
-      // TODO: Generate position commitment from tick range and user address
-      // For now, using a mock value
-      const positionCommitment = BigInt(Date.now())
+      // Get token address from first available note (or allow user to select token in future)
+      const tokenAddress = availableNotes[0]?.tokenAddress
 
       await mintLiquidity(
-        selectedNote,
+        amountBigInt,
+        tokenAddress,
         tickLower,
         tickUpper,
-        calculatedLiquidity,
-        positionCommitment
+        calculatedLiquidity
       )
 
       // Reset form on success
       setAmount("")
-      setSelectedNoteIndex(null)
-    } catch (err) {
+    } catch (err: any) {
       console.error("Mint liquidity failed:", err)
+      alert(err.message || "Failed to mint liquidity. Please try again.")
     }
   }
 
@@ -150,16 +189,21 @@ export function LiquidityManager() {
       return
     }
 
-    // For burn, we need a note that represents the LP position
-    // This is simplified - in reality, LP positions are tracked differently
-    if (!selectedNote) {
-      alert("Please select a note")
+    // For burn, we need a note - automatically use first available
+    if (availableNotes.length === 0) {
+      alert("No notes available. Please deposit tokens first")
+      return
+    }
+
+    const noteToUse = firstAvailableNote
+    if (!noteToUse) {
+      alert("No valid note available")
       return
     }
 
     try {
       await burnLiquidity(
-        selectedNote,
+        noteToUse,
         position.tickLower,
         position.tickUpper,
         liquidityBigInt,
@@ -189,14 +233,21 @@ export function LiquidityManager() {
       return
     }
 
-    if (!selectedNote) {
-      alert("Please select a note")
+    // For collect fees, we need a note - automatically use first available
+    if (availableNotes.length === 0) {
+      alert("No notes available. Please deposit tokens first")
+      return
+    }
+
+    const noteToUse = firstAvailableNote
+    if (!noteToUse) {
+      alert("No valid note available")
       return
     }
 
     try {
       await collectFees(
-        selectedNote,
+        noteToUse,
         position.tickLower,
         position.tickUpper,
         position.positionCommitment
@@ -226,24 +277,10 @@ export function LiquidityManager() {
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
-              {/* Note Selector */}
-              {availableNotes.length > 0 && (
-                <div>
-                  <label className="text-sm text-muted-foreground mb-2 block">
-                    Select Note
-                  </label>
-                  <select
-                    value={selectedNoteIndex ?? ""}
-                    onChange={(e) => setSelectedNoteIndex(e.target.value ? Number(e.target.value) : null)}
-                    className="w-full bg-stark-darker border border-stark-gray/20 rounded px-3 py-2 text-sm"
-                  >
-                    <option value="">Auto-select first note</option>
-                    {availableNotes.map((note, idx) => (
-                      <option key={idx} value={idx}>
-                        Note #{idx + 1}: {note.amount.toString()} (Index: {note.index ?? 'N/A'})
-                      </option>
-                    ))}
-                  </select>
+              {/* Note selection is automatic - no selector needed */}
+              {availableNotes.length === 0 && (
+                <div className="bg-stark-darker border border-stark-gray/20 rounded px-4 py-3 text-sm text-muted-foreground">
+                  No notes available. Please deposit tokens first.
                 </div>
               )}
 
@@ -258,9 +295,9 @@ export function LiquidityManager() {
                   onChange={(e) => setAmount(e.target.value)}
                   className="bg-stark-darker border-stark-gray/20"
                 />
-                {selectedNote && (
+                {firstAvailableNote && (
                   <div className="text-xs text-muted-foreground mt-1">
-                    Available: {selectedNote.amount.toString()}
+                    Available: {firstAvailableNote.amount.toString()}
                   </div>
                 )}
               </div>
@@ -301,7 +338,7 @@ export function LiquidityManager() {
                 <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-sm text-red-400">
                   {getUserFriendlyError(error, { 
                     operation: 'mint',
-                    balance: selectedNote?.amount,
+                    balance: firstAvailableNote?.amount,
                   })}
                 </div>
               )}
@@ -332,7 +369,7 @@ export function LiquidityManager() {
               <Button
                 className="w-full bg-stark-blue hover:bg-stark-blue/90 disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={handleMintLiquidity}
-                disabled={isLoading || !amount || amountBigInt === 0n || !selectedNote || tickLower >= tickUpper}
+                disabled={isLoading || !amount || amountBigInt === 0n || availableNotes.length === 0 || tickLower >= tickUpper}
               >
                 {isLoading ? "Processing..." : "Add Private Liquidity"}
               </Button>
@@ -388,23 +425,10 @@ export function LiquidityManager() {
                     </select>
                   </div>
 
-                  {selectedPositionId && availableNotes.length > 0 && (
-                    <div>
-                      <label className="text-sm text-muted-foreground mb-2 block">
-                        Select Note
-                      </label>
-                      <select
-                        value={selectedNoteIndex ?? ""}
-                        onChange={(e) => setSelectedNoteIndex(e.target.value ? Number(e.target.value) : null)}
-                        className="w-full bg-stark-darker border border-stark-gray/20 rounded px-3 py-2 text-sm"
-                      >
-                        <option value="">Auto-select first note</option>
-                        {availableNotes.map((note, idx) => (
-                          <option key={idx} value={idx}>
-                            Note #{idx + 1}: {note.amount.toString()}
-                          </option>
-                        ))}
-                      </select>
+                  {/* Note selection is automatic - no selector needed */}
+                  {selectedPositionId && availableNotes.length === 0 && (
+                    <div className="bg-stark-darker border border-stark-gray/20 rounded px-4 py-3 text-sm text-muted-foreground">
+                      No notes available. Please deposit tokens first.
                     </div>
                   )}
 
@@ -425,7 +449,7 @@ export function LiquidityManager() {
                     <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-sm text-red-400">
                       {getUserFriendlyError(error, { 
                         operation: 'burn',
-                        balance: selectedNote?.amount,
+                        balance: firstAvailableNote?.amount,
                       })}
                     </div>
                   )}
@@ -434,7 +458,7 @@ export function LiquidityManager() {
                     className="w-full"
                     variant="outline"
                     onClick={handleBurnLiquidity}
-                    disabled={isLoading || !liquidityAmount || liquidityBigInt === 0n || !selectedPositionId || !selectedNote}
+                    disabled={isLoading || !liquidityAmount || liquidityBigInt === 0n || !selectedPositionId || availableNotes.length === 0}
                   >
                     {isLoading ? "Processing..." : "Remove Liquidity"}
                   </Button>
@@ -478,7 +502,6 @@ export function LiquidityManager() {
                     position={position}
                     onCollectFees={() => {
                       setSelectedPositionId(position.id)
-                      setSelectedNoteIndex(availableNotes.length > 0 ? 0 : null)
                       handleCollectFees()
                     }}
                     onRemove={() => {

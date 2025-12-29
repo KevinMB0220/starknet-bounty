@@ -147,6 +147,45 @@ export async function verifyAndFixCommitment(
 }
 
 /**
+ * Generate position commitment for LP operations
+ * position_commitment = Mask(Poseidon(secret, tick_lower + tick_upper))
+ * This matches the circuit's calculation in lp.circom
+ * 
+ * @param secret - User secret from input note
+ * @param tickLower - Lower tick of LP position
+ * @param tickUpper - Upper tick of LP position
+ * @returns Position commitment
+ */
+export async function generatePositionCommitment(
+  secret: bigint,
+  tickLower: number,
+  tickUpper: number
+): Promise<bigint> {
+  // Use API endpoint to calculate position commitment with BN254 Poseidon
+  // This matches the circuit's Poseidon implementation (Circom/BN254)
+  const tickSum = BigInt(tickLower) + BigInt(tickUpper)
+  
+  const response = await fetch("/api/commitment/position", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      secret: secret.toString(),
+      tickSum: tickSum.toString(),
+    }),
+  })
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}))
+    throw new Error(
+      errorData.error || "Failed to generate position commitment"
+    )
+  }
+
+  const data = await response.json()
+  return BigInt(data.commitment)
+}
+
+/**
  * Generate a new random note
  */
 export async function generateNote(amount: bigint = 0n, tokenAddress?: string): Promise<Note> {

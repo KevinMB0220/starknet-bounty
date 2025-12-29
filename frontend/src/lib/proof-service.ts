@@ -70,7 +70,7 @@ export class ProofService {
     const zkeyPath = path.join(
       this.circuitsPath,
       "build",
-      "zkey",
+      "zkeys",
       `${circuitName}.zkey`
     );
 

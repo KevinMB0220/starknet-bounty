@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import { StarknetProvider } from "@/components/StarknetProvider";
+import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
@@ -22,9 +23,11 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable} font-sans bg-stark-dark text-white antialiased`}
       >
-        <StarknetProvider>
-          {children}
-        </StarknetProvider>
+        <ErrorBoundary>
+          <StarknetProvider>
+            {children}
+          </StarknetProvider>
+        </ErrorBoundary>
       </body>
     </html>
   );

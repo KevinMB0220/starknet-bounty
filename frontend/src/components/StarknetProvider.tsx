@@ -41,6 +41,63 @@ function NotificationProvider({ children }: { children: React.ReactNode }) {
 }
 
 export function StarknetProvider({ children }: { children: React.ReactNode }) {
+  // Suppress MetaMask errors globally - they're expected when using Starknet
+  useEffect(() => {
+    const originalError = console.error;
+    const originalWarn = console.warn;
+
+    // Override console.error to filter MetaMask errors
+    console.error = (...args: any[]) => {
+      const errorString = args.join(" ");
+      if (
+        errorString.includes("MetaMask") ||
+        errorString.includes("Failed to connect to MetaMask") ||
+        errorString.includes("nkbihfbeogaeaoehlefnkodbefgpgknn")
+      ) {
+        // Silently ignore MetaMask errors
+        return;
+      }
+      originalError.apply(console, args);
+    };
+
+    // Override window.onerror to catch unhandled errors
+    const handleError = (event: ErrorEvent) => {
+      if (
+        event.message?.includes("MetaMask") ||
+        event.message?.includes("Failed to connect to MetaMask") ||
+        event.filename?.includes("nkbihfbeogaeaoehlefnkodbefgpgknn")
+      ) {
+        event.preventDefault();
+        return true; // Prevent default error handling
+      }
+      return false;
+    };
+
+    window.addEventListener("error", handleError);
+
+    // Override unhandled promise rejections
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason?.message || event.reason?.toString() || "";
+      if (
+        reason.includes("MetaMask") ||
+        reason.includes("Failed to connect to MetaMask") ||
+        reason.includes("nkbihfbeogaeaoehlefnkodbefgpgknn")
+      ) {
+        event.preventDefault();
+        return;
+      }
+    };
+
+    window.addEventListener("unhandledrejection", handleUnhandledRejection);
+
+    return () => {
+      console.error = originalError;
+      console.warn = originalWarn;
+      window.removeEventListener("error", handleError);
+      window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+    };
+  }, []);
+
   const { connectors } = useInjectedConnectors({
     // Show these connectors if the user has no connector installed.
     recommended: [argent(), braavos()],

@@ -120,9 +120,12 @@ export function SwapInterface() {
   const amountNum = parseFloat(amountValue) || 0;
 
   // Find suitable note (either selected or first with enough balance)
+  // If user manually selected a note, use it only if it has sufficient balance
+  // Otherwise, automatically find a note with enough balance
   const selectedNote =
     selectedNoteIndex !== null &&
-    availableNotes[selectedNoteIndex] !== undefined
+    availableNotes[selectedNoteIndex] !== undefined &&
+    availableNotes[selectedNoteIndex].amount >= amountBigInt
       ? availableNotes[selectedNoteIndex]
       : availableNotes.find((n) => n.amount >= amountBigInt);
 
@@ -232,16 +235,32 @@ export function SwapInterface() {
         return;
       }
 
+      // Double-check balance (should not happen if selection logic is correct, but safety check)
+      let noteToUse = selectedNote;
       if (selectedNote.amount < amountBigInt) {
-        alert(
-          `Insufficient balance in selected note. Available: ${selectedNote.amount.toString()}, Required: ${amountBigInt.toString()}`
-        );
-        return;
+        // Try to find a note with sufficient balance
+        const suitableNote = availableNotes.find((n) => n.amount >= amountBigInt);
+        if (suitableNote) {
+          console.warn(
+            `Selected note has insufficient balance. Auto-selecting note with sufficient balance.`,
+            {
+              selectedNoteBalance: selectedNote.amount.toString(),
+              required: amountBigInt.toString(),
+              suitableNoteBalance: suitableNote.amount.toString(),
+            }
+          );
+          noteToUse = suitableNote;
+        } else {
+          alert(
+            `Insufficient balance in selected note. Available: ${selectedNote.amount.toString()}, Required: ${amountBigInt.toString()}\n\nPlease reduce the swap amount or deposit more tokens.`
+          );
+          return;
+        }
       }
 
-      if (!selectedNote.index && selectedNote.index !== 0) {
+      if (!noteToUse.index && noteToUse.index !== 0) {
         alert(
-          "Selected note does not have a leaf index. Please wait for synchronization."
+          "Note does not have a leaf index. Please wait for synchronization."
         );
         return;
       }
@@ -258,7 +277,7 @@ export function SwapInterface() {
         const sqrtPriceLimitX128 = { low: 0n, high: 0n };
 
         const outputNote = await executeSwap(
-          selectedNote,
+          noteToUse,
           amountBigInt,
           zeroForOne,
           sqrtPriceLimitX128,
