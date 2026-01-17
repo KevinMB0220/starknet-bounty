@@ -63,7 +63,7 @@ async fn main() {
     let rpc_url = std::env::var("RPC_URL")
         .unwrap_or_else(|_| "https://api.cartridge.gg/x/starknet/sepolia".to_string());
     let contract_address = std::env::var("CONTRACT_ADDRESS").unwrap_or_else(|_| {
-        "0x00cf52fa0d4f080faac7e780ae5b7298047c1626db180ad7bd628fa87860dfba".to_string()
+        "0x00c692a0a7b34ffe8c5484e6db9488dc881ceae9c9b05d67de21387ea9f3edd6".to_string()
     });
 
     // Validate ABIs on startup

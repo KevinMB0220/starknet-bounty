@@ -8,7 +8,7 @@ import { usePortfolioStore } from "./use-portfolio"
 import { useLPPositionStore } from "@/stores/use-lp-position-store"
 import { generateNote, Note, generatePositionCommitment } from "@/lib/commitment"
 import { ZylithContractClient } from "@/lib/contracts/zylith-contract"
-import { Contract, Account, CallData } from "starknet"
+import { Contract, Account } from "starknet"
 import { CONFIG } from "@/lib/config"
 import zylithAbi from "@/lib/abis/zylith-abi.json"
 import { validateNote } from "@/lib/note-validation"
@@ -628,6 +628,10 @@ export function useLiquidity() {
       console.log(`  - liquidity: ${liquidityStr} (u128)`)
       console.log(`  - new_commitment: ${newCommitmentStr} (felt252)`)
       console.log(`  - position_commitment: ${normalizedPublicInputs[6]} (felt252)`)
+
+      console.log(`[Frontend] 🔍 Debug - Array values:`)
+      console.log(`  - normalizedProof:`, normalizedProof)
+      console.log(`  - normalizedPublicInputs:`, normalizedPublicInputs)
       
       // Verify that the felt252 values match what's in public_inputs
       // The contract will verify that public_inputs[2] == tick_lower_felt
@@ -648,24 +652,28 @@ export function useLiquidity() {
       console.log(`  - liquidity: u128 = ${liquidityStr}`)
       console.log(`  - new_commitment: felt252 = ${newCommitmentStr}`)
       
-      // Create Contract instance with account as provider
-      // This ensures Starknet.js handles all type serialization automatically
-      const contract = new Contract(
-        zylithAbi,
-        CONFIG.ZYLITH_CONTRACT,
-        account  // ← CRITICAL: Pass account as provider for proper serialization
-      )
-      
-      // Call the method directly - Starknet.js handles all serialization
-      // Contract now accepts felt252 for tick_lower and tick_upper (not i32)
-      const tx = await contract.private_mint_liquidity(
-        normalizedProof,           // Array<felt252> - Starknet.js serializes array correctly
-        normalizedPublicInputs,    // Array<felt252> - Starknet.js serializes array correctly
-        tickLowerFelt,             // felt252 (string) - Contract converts to i32 internally
-        tickUpperFelt,             // felt252 (string) - Contract converts to i32 internally
-        BigInt(liquidityStr),      // BigInt - Starknet.js serializes as u128
-        newCommitmentStr           // string - Starknet.js serializes as felt252
-      )
+      // Use Contract with proper ABI-aware calldata compilation
+      // Create a new CallData instance with the function's ABI
+      const contract = new Contract(zylithAbi, CONFIG.ZYLITH_CONTRACT, account);
+
+      // Use contract.populate to build calldata with ABI awareness
+      // NOTE: Parameter order changed - arrays moved to end for Argent wallet compatibility
+      const calldata = contract.populate('private_mint_liquidity', {
+        tick_lower_felt: tickLowerFelt,
+        tick_upper_felt: tickUpperFelt,
+        liquidity: liquidityStr,
+        new_commitment: newCommitmentStr,
+        proof: normalizedProof,
+        public_inputs: normalizedPublicInputs,
+      });
+
+      console.log('[Frontend] 📋 Populated calldata:', calldata);
+
+      const tx = await account.execute({
+        contractAddress: CONFIG.ZYLITH_CONTRACT,
+        entrypoint: 'private_mint_liquidity',
+        calldata: calldata.calldata,
+      })
       
       console.log(`[Frontend] ✅ Transaction sent via Contract instance: ${tx.transaction_hash}`)
 
@@ -857,13 +865,14 @@ export function useLiquidity() {
         const tickUpperFelt = i32ToFelt252(tickUpper);
         
         const contract = new Contract(zylithAbi, CONFIG.ZYLITH_CONTRACT, account)
+        // NOTE: Parameter order changed - arrays moved to end for Argent wallet compatibility
         tx = await contract.private_burn_liquidity(
-          proof,
-          publicInputs,
-          tickLowerFelt,  // felt252 (contract converts to i32 internally)
-          tickUpperFelt,  // felt252 (contract converts to i32 internally)
+          BigInt(tickLowerFelt),  // BigInt - Contract converts to i32 internally
+          BigInt(tickUpperFelt),  // BigInt - Contract converts to i32 internally
           liquidity,
-          outputNote.commitment
+          outputNote.commitment,
+          proof,
+          publicInputs
         )
       }
 
@@ -1001,13 +1010,14 @@ export function useLiquidity() {
       const tickUpperFelt = i32ToFelt252(tickUpper);
       
       const contract = new Contract(zylithAbi, CONFIG.ZYLITH_CONTRACT, account)
-      
+
+      // NOTE: Parameter order changed - arrays moved to end for Argent wallet compatibility
       const tx = await contract.private_collect(
+        BigInt(tickLowerFelt),  // BigInt - Contract converts to i32 internally
+        BigInt(tickUpperFelt),  // BigInt - Contract converts to i32 internally
+        outputNote.commitment,
         proof,
-        publicInputs,
-        tickLowerFelt,  // felt252 (contract converts to i32 internally)
-        tickUpperFelt,  // felt252 (contract converts to i32 internally)
-        outputNote.commitment
+        publicInputs
       )
 
       addTransaction({
