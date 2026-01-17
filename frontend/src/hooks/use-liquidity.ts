@@ -839,14 +839,14 @@ export function useLiquidity() {
         );
 
         // Call the method directly - Starknet.js handles all serialization
-        // Contract now accepts felt252 for tick_lower and tick_upper (not i32)
+        // NOTE: Parameter order changed - arrays moved to end for Argent wallet compatibility
         const tx = await contract.private_mint_liquidity(
-          normalizedProof, // Array<felt252> - Starknet.js serializes array correctly
-          normalizedPublicInputs, // Array<felt252> - Starknet.js serializes array correctly
           tickLowerFelt, // felt252 (string) - Contract converts to i32 internally
           tickUpperFelt, // felt252 (string) - Contract converts to i32 internally
           BigInt(liquidityStr), // BigInt - Starknet.js serializes as u128
-          newCommitmentStr // string - Starknet.js serializes as felt252
+          newCommitmentStr, // string - Starknet.js serializes as felt252
+          normalizedProof, // Array<felt252> - Moved to end for Argent wallet compatibility
+          normalizedPublicInputs // Array<felt252> - Moved to end for Argent wallet compatibility
         );
 
         console.log(
