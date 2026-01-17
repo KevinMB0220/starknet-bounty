@@ -36,31 +36,31 @@ pub trait IZylith<TContractState> {
 
     fn private_mint_liquidity(
         ref self: TContractState,
-        tick_lower_felt: felt252,  // ← Changed from i32 to felt252 for Starknet.js compatibility
-        tick_upper_felt: felt252,  // ← Changed from i32 to felt252 for Starknet.js compatibility
+        tick_lower_felt: felt252,
+        tick_upper_felt: felt252,
         liquidity: u128,
         new_commitment: felt252,
-        proof: Array<felt252>,     // ← Moved to end for Argent wallet compatibility
-        public_inputs: Array<felt252>,  // ← Moved to end for Argent wallet compatibility
+        proof: Array<felt252>,
+        public_inputs: Array<felt252>,
     ) -> (u128, u128);
 
     fn private_burn_liquidity(
         ref self: TContractState,
-        tick_lower_felt: felt252,  // ← Changed from i32 to felt252 for Starknet.js compatibility
-        tick_upper_felt: felt252,  // ← Changed from i32 to felt252 for Starknet.js compatibility
+        tick_lower_felt: felt252,
+        tick_upper_felt: felt252,
         liquidity: u128,
         new_commitment: felt252,
-        proof: Array<felt252>,     // ← Moved to end for Argent wallet compatibility
-        public_inputs: Array<felt252>,  // ← Moved to end for Argent wallet compatibility
+        proof: Array<felt252>,
+        public_inputs: Array<felt252>,
     ) -> (u128, u128);
 
     fn private_collect(
         ref self: TContractState,
-        tick_lower_felt: felt252,  // ← Changed from i32 to felt252 for Starknet.js compatibility
-        tick_upper_felt: felt252,  // ← Changed from i32 to felt252 for Starknet.js compatibility
+        tick_lower_felt: felt252,
+        tick_upper_felt: felt252,
         new_commitment: felt252,
-        proof: Array<felt252>,     // ← Moved to end for Argent wallet compatibility
-        public_inputs: Array<felt252>,  // ← Moved to end for Argent wallet compatibility
+        proof: Array<felt252>,
+        public_inputs: Array<felt252>,
     ) -> (u128, u128);
 
     fn mint(
