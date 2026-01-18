@@ -2,7 +2,7 @@ export const CONFIG = {
   // Contract addresses from Zylith deployment
   ZYLITH_CONTRACT:
     process.env.NEXT_PUBLIC_ZYLITH_CONTRACT ||
-    "0x00c692a0a7b34ffe8c5484e6db9488dc881ceae9c9b05d67de21387ea9f3edd6",
+    "0x05c1fecd5025d2e3d71482ac26ecf9138b08c9483f43761543cf71960373ce0b",
 
   // Verifier contracts
   VERIFIERS: {

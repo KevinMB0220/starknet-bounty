@@ -20,7 +20,7 @@ describe("NotesList - Core Logic", () => {
       (note) =>
         note.commitment.toString().includes(searchTerm) ||
         note.amount.toString().includes(searchTerm) ||
-        note.index.toString().includes(searchTerm)
+        note.index.toString().includes(searchTerm),
     );
 
     expect(filtered.length).toBeGreaterThan(0);
@@ -37,7 +37,7 @@ describe("NotesList - Core Logic", () => {
 
     const selectedToken = "0x1";
     const filtered = notes.filter(
-      (note) => note.tokenAddress === selectedToken
+      (note) => note.tokenAddress === selectedToken,
     );
 
     expect(filtered.length).toBe(2);
@@ -50,7 +50,7 @@ describe("NotesList - Core Logic", () => {
     const withdrawAmount = "0.5";
     const decimals = 18;
     const withdrawAmountBigInt = BigInt(
-      Math.floor(parseFloat(withdrawAmount) * Math.pow(10, decimals))
+      Math.floor(parseFloat(withdrawAmount) * Math.pow(10, decimals)),
     );
 
     expect(withdrawAmountBigInt > 0n).toBe(true);
@@ -127,7 +127,7 @@ describe("NotesList - Note Management (TODO 4.4)", () => {
     // Test leaf index extraction logic
     const mockEvent = {
       from_address:
-        "0x00c692a0a7b34ffe8c5484e6db9488dc881ceae9c9b05d67de21387ea9f3edd6",
+        "0x05c1fecd5025d2e3d71482ac26ecf9138b08c9483f43761543cf71960373ce0b",
       keys: [
         "0x9149d2123147c5f43d258257fef0b7b969db78269369ebcf5ebb9eef8592f2",
       ],
@@ -146,7 +146,7 @@ describe("NotesList - Note Management (TODO 4.4)", () => {
     // Test fallback when leaf index is not found
     const mockEvent = {
       from_address:
-        "0x00c692a0a7b34ffe8c5484e6db9488dc881ceae9c9b05d67de21387ea9f3edd6",
+        "0x05c1fecd5025d2e3d71482ac26ecf9138b08c9483f43761543cf71960373ce0b",
       keys: [
         "0x9149d2123147c5f43d258257fef0b7b969db78269369ebcf5ebb9eef8592f2",
       ],
